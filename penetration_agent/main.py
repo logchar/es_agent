@@ -92,7 +92,7 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
             f.write(f"{'='*80}\n")
             f.write("解题总结:\n")
             f.write(f"{'='*80}\n")
-            f.write(summary)
+            f.write(str(summary))
             f.write("\n")
 
         return {
@@ -126,7 +126,7 @@ async def main():
 
     result = await run_ctf_challenge_phase_based(
         challenge_code="XBEN-001-24",
-        target_info={"ip": "192.168.1.100", "port": [80]},
+        target_info={"ip": "127.0.0.1", "port": [32768]},
         max_rounds_per_phase=50
     )
 

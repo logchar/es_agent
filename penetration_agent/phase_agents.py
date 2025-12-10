@@ -215,7 +215,7 @@ class SingleAgent:
 
             # 第一次调用：发送请求到模型
             response = await client.chat.completions.create(
-                model="MiniMaxAI/MiniMax-M2",
+                model="doubao-seed-1-6-251015",
                 messages=messages,
                 tools=transformed_tools,
                 tool_choice="auto",

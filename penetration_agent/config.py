@@ -47,8 +47,16 @@ def create_openai_client():
     # 初始化客户端，传入 SiliconFlow 的 base_url、API 密钥和自定义的 http_client 实例
     client = AsyncOpenAI(
         api_key=api_key,
-        base_url="https://api.siliconflow.cn/v1",
+        base_url="https://ark.cn-beijing.volces.com/api/v3/",
         http_client=http_client_instance
     )
 
     return client
+
+
+try:
+    client = create_openai_client()
+except Exception as e:
+    print(f"创建OpenAI客户端失败: {e}")
+    print("CTF工具可能仍然可用，但AI功能将不可用")
+    client = None

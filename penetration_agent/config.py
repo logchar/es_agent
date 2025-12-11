@@ -29,7 +29,7 @@ def create_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("错误：OPENAI_API_KEY 环境变量未设置！")
-        print("请设置 SiliconFlow API Key")
+        print("请设置 DouBao API Key")
         exit(1)
 
     # 检查并配置代理
@@ -44,10 +44,11 @@ def create_openai_client():
         print("未检测到代理，将进行直连")
         http_client_instance = None
 
-    # 初始化客户端，传入 SiliconFlow 的 base_url、API 密钥和自定义的 http_client 实例
+    # 初始化客户端
+    base_url = os.getenv("OPENAI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3/")
     client = AsyncOpenAI(
         api_key=api_key,
-        base_url="https://ark.cn-beijing.volces.com/api/v3/",
+        base_url=base_url,
         http_client=http_client_instance
     )
 

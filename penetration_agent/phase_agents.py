@@ -8,6 +8,9 @@ import asyncio
 import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 from config import client
 # from tools import HexStrikeClient
@@ -211,16 +214,20 @@ class SingleAgent:
         # 简化版本：不做消息总结，直接使用固定窗口
         while True:
             # 记录LLM请求
-            log_llm_request(messages, "MiniMaxAI/MiniMax-M2", 0, max_rounds)
+            model_name = os.getenv("OPENAI_MODEL_NAME", "doubao-seed-1-6-251015")
+            log_llm_request(messages, model_name, 0, max_rounds)
 
             # 第一次调用：发送请求到模型
             response = await client.chat.completions.create(
-                model="doubao-seed-1-6-251015",
+                model=model_name,
                 messages=messages,
                 tools=transformed_tools,
                 tool_choice="auto",
                 temperature=0.7
             )
+            print("================== 模型响应 =================")
+            print(response)
+            print("================== 模型响应 =================")
 
             # 记录使用情况
             usage_tracker = get_current_usage_tracker()
@@ -233,7 +240,7 @@ class SingleAgent:
 
             # 记录LLM响应
             log_llm_response(
-                response_message.content if response_message.content else "",
+                response_message,
                 0,
                 len(tool_calls) if tool_calls else 0
             )

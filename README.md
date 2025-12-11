@@ -12,9 +12,10 @@ conda activate ea_env
 pip install -r requirements.txt
 ```
 
-2. 启动 hexstrike-ai 渗透工具代理（在项目根目录）：
+2. 启动 hexstrike-ai 渗透工具代理，以及补充一些额外工具：
 ```bash
-python hexstrike_server.py
+python hexstrike-ai/hexstrike_server.py
+sudo apt update && sudo apt install whatweb
 ```
 
 3. 编辑 `main.py`，根据需要指向不同的漏洞与目标 URL，然后运行：

@@ -324,7 +324,7 @@ class LoggerManager:
             "event": "llm_response",
             "phase": phase,
             "tool_calls_count": tool_calls_count,
-            "response_preview": str(response)[:500] if response else None
+            "response_preview": str(response)[:1000] if response else None
         }
         record = logger.makeRecord(
             logger.name, logging.INFO, "", 0,

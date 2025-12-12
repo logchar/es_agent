@@ -63,15 +63,67 @@ class EvaluationAlgorithm:
             
     def _extract_tool_name(self, entry: Dict) -> str:
         """从日志中提取工具名称"""
-        preview = str(entry.get("response_preview", ""))
-        if "whatweb_scan" in preview:
-            return "whatweb_scan"
-        elif "dirsearch_scan" in preview:
-            return "dirsearch_scan"
-        elif "run_python" in preview:
-            return "run_python"
-        elif "http_repeater" in preview:
-            return "http_repeater"
+        # 尽量从显式字段中提取
+        if not isinstance(entry, dict):
+            return "unknown"
+
+        # 优先使用显式字段
+        tool_name_field = entry.get("tool_name") or entry.get("tool") or entry.get("name")
+        if isinstance(tool_name_field, str) and tool_name_field:
+            return tool_name_field
+
+        # 支持 tool_calls 结构（列表/字典）
+        tc = entry.get("tool_calls") or entry.get("tool_calls_count")
+        if isinstance(tc, list) and tc:
+            first = tc[0]
+            if isinstance(first, dict) and first.get("name"):
+                return first.get("name")
+            if isinstance(first, str):
+                return first
+
+        preview = str(entry.get("response_preview", "") or "").lower()
+        content = str(entry.get("content", "") or "").lower()
+        combined = preview + " " + content
+
+        # 映射常用工具关键词到规范名称（基于 phase_agents system_prompt 列表）
+        mapping = [
+            ("whatweb_scan", "whatweb"),
+            ("dirsearch_scan", "dirsearch"),
+            ("katana_crawl", "katana"),
+            ("arjun_parameter_discovery", "arjun"),
+            ("nuclei_scan", "nuclei"),
+            ("sqlmap_scan", "sqlmap"),
+            ("dalfox_xss_scan", "dalfox"),
+            ("dotdotpwn_scan", "dotdotpwn"),
+            ("hydra_attack", "hydra"),
+            ("jwt_analyzer", "jwt"),
+            ("idor_testing", "idor"),
+            ("http_repeater", "repeater"),
+            ("http_intruder", "intruder"),
+            ("file_upload_testing", "upload"),
+            ("ai_generate_payload", "ai_generate_payload"),
+            ("graphql_scanner", "graphql"),
+            ("business_logic_testing", "business_logic"),
+            ("run_python", "run_python"),
+            ("run_command", "run_command")
+        ]
+
+        for name, key in mapping:
+            if key in combined:
+                return name
+
+        # 常见后缀/前缀匹配
+        if "scan" in combined:
+            m = re.search(r"(\w+)_scan", combined)
+            if m:
+                return m.group(0)
+
+        # 最后尝试匹配工具单词
+        for kw in ["whatweb", "dirsearch", "nuclei", "sqlmap", "dalfox", "hydra", "graphql", "intruder", "repeater", "arjun", "katana", "dotdotpwn", "jwt", "idor"]:
+            if kw in combined:
+                # 返回较规范的名称
+                return kw + ("_scan" if kw in ("nuclei", "whatweb", "dirsearch", "dotdotpwn") else "")
+
         return "unknown"
         
     def _extract_reasoning(self, entry: Dict) -> str:
@@ -130,21 +182,56 @@ class EvaluationAlgorithm:
         # 从日志中推断执行了哪些步骤
         executed_steps = set()
         
-        # 检查工具调用来推断步骤
+        # 检查工具调用来推断步骤（支持更多工具）
+        tool_step_map = {
+            "whatweb_scan": {"reconnaissance"},
+            "dirsearch_scan": {"reconnaissance", "scanning"},
+            "katana_crawl": {"reconnaissance"},
+            "arjun_parameter_discovery": {"reconnaissance"},
+            "nuclei_scan": {"scanning"},
+            "sqlmap_scan": {"exploitation"},
+            "dalfox_xss_scan": {"exploitation"},
+            "dotdotpwn_scan": {"exploitation"},
+            "hydra_attack": {"exploitation", "maintaining_access"},
+            "jwt_analyzer": {"reconnaissance", "exploitation"},
+            "idor_testing": {"exploitation"},
+            "http_repeater": {"exploitation"},
+            "http_intruder": {"exploitation"},
+            "file_upload_testing": {"exploitation", "maintaining_access"},
+            "ai_generate_payload": {"exploitation"},
+            "graphql_scanner": {"scanning", "reconnaissance"},
+            "business_logic_testing": {"exploitation"},
+            "run_python": {"exploitation"}
+        }
+
         for tool in self.tool_calls:
-            if tool in ["whatweb_scan", "dirsearch_scan"]:
-                executed_steps.add("reconnaissance")
-                executed_steps.add("scanning")
-            elif "run_python" in tool:
-                executed_steps.add("exploitation")
-            elif "http_repeater" in tool:
-                executed_steps.add("exploitation")
-                
-        # 检查是否尝试了登录（从推理内容推断）
+            if not tool:
+                continue
+            # 精确匹配或包含匹配（兼容不同记录格式）
+            matched = False
+            for tname, steps in tool_step_map.items():
+                if tool == tname or tname in tool:
+                    executed_steps.update(steps)
+                    matched = True
+            if not matched:
+                # 未知工具尝试简单分类
+                lower = tool.lower()
+                if "scan" in lower or "nuclei" in lower or "dirsearch" in lower:
+                    executed_steps.update({"reconnaissance", "scanning"})
+                elif "repeater" in lower or "intruder" in lower or "sql" in lower or "xss" in lower:
+                    executed_steps.add("exploitation")
+                elif "hydra" in lower or "upload" in lower or "webshell" in lower:
+                    executed_steps.update({"exploitation", "maintaining_access"})
+                     
+        # 检查是否尝试了登录或生成报告（从推理内容或预览推断）
         for entry in self.log_data:
-            preview = str(entry.get("response_preview", ""))
-            if "login" in preview.lower() or "password" in preview.lower():
+            preview = str(entry.get("response_preview", "")).lower()
+            content = str(entry.get("content", "")).lower()
+            combined = preview + " " + content
+            if "login" in combined or "password" in combined or "credential" in combined:
                 executed_steps.add("exploitation")
+            if "report" in combined or "summary" in combined or "finding" in combined:
+                executed_steps.add("reporting")
                 
         step_coverage = len(executed_steps) / len(penetration_steps) if penetration_steps else 0.0
         
@@ -160,3 +247,4 @@ class EvaluationAlgorithm:
             completion_rate=step_coverage * 100,  # 转换为百分比
             step_coverage=step_coverage
         )
+    

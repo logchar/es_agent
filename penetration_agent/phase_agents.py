@@ -214,7 +214,7 @@ class SingleAgent:
         # 简化版本：不做消息总结，直接使用固定窗口
         while True:
             # 记录LLM请求
-            model_name = os.getenv("OPENAI_MODEL_NAME", "doubao-seed-1-6-251015")
+            model_name = os.getenv("OPENAI_MODEL_NAME")
             log_llm_request(messages, model_name, 0, max_rounds)
 
             # 第一次调用：发送请求到模型

@@ -5,9 +5,12 @@ from typing import Dict, List
 import statistics
 from datetime import datetime
 from pathlib import Path
-from data_class import QuantitativeMetrics, QualitativeMetrics, OverallScore
-from evaluation_algorithm import EvaluationAlgorithm
-from evaluation_agent import EvaluationAgent
+from .data_class import QuantitativeMetrics, QualitativeMetrics, OverallScore
+from .evaluation_algorithm import EvaluationAlgorithm
+from .evaluation_agent import EvaluationAgent
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class EvaluationSystem:
@@ -16,7 +19,7 @@ class EvaluationSystem:
     def __init__(self, log_data: List[Dict]):
         self.log_data = log_data
         self.quantitative_evaluator = EvaluationAlgorithm(log_data)
-        self.qualitative_evaluator = EvaluationAgent(log_data)
+        self.qualitative_evaluator = EvaluationAgent(log_data, os.getenv("OPENAI_MODEL_NAME"))
         
     def evaluate(self) -> OverallScore:
         """执行完整评估"""
@@ -49,13 +52,12 @@ class EvaluationSystem:
             "token_efficiency": quantitative_metrics.token_efficiency * 10
         }
         
-        qualitative_breakdown = asdict(qualitative_metrics)
-
         # qualitative_metrics may be a dict (new LLM output) or a QualitativeMetrics dataclass
         if isinstance(qualitative_metrics, dict):
             qualitative_breakdown = qualitative_metrics
         else:
-            qualitative_breakdown = asdict(qualitative_metrics)
+            # if None or a dataclass, convert to dict (dataclass -> dict; None -> empty dict)
+            qualitative_breakdown = asdict(qualitative_metrics) if qualitative_metrics is not None else {}
 
         return OverallScore(
             quantitative_score=quantitative_score,
@@ -153,26 +155,70 @@ class EvaluationSystem:
         report += f"渗透步骤覆盖率: {quant_metrics.step_coverage * 100:.1f}%\n"
         report += f"Token效率: {quant_metrics.token_efficiency:.4f}\n"
         report += f"定量得分: {overall_score.quantitative_score:.2f}/10.0\n\n"
+
+        # 添加每个定量子项的得分（0-10）
+        report += "定量子项得分:\n"
+        qbd = overall_score.quantitative_breakdown or {}
+        report += f"- Token 使用得分: {qbd.get('token_usage', 0.0):.2f}/10.0\n"
+        report += f"- 响应时间效率得分: {qbd.get('time_efficiency', 0.0):.2f}/10.0\n"
+        report += f"- 任务完成度得分: {qbd.get('completion_rate', 0.0):.2f}/10.0\n"
+        report += f"- 步骤覆盖率得分: {qbd.get('step_coverage', 0.0):.2f}/10.0\n"
+        report += f"- Token 效率得分: {qbd.get('token_efficiency', 0.0):.2f}/10.0\n\n"
         
         report += "2. 定性评估结果（评估AI Agent评估）\n"
         report += "-" * 40 + "\n"
-        # qual_metrics may be dict or dataclass
-        def _q(val):
+        # qual_metrics may be dict or dataclass. Present per-dimension score, confidence and reasoning when available.
+        def _qscore(name: str) -> float:
             if isinstance(qual_metrics, dict):
-                entry = qual_metrics.get(val, {})
-                return entry.get('score', 5.0) if isinstance(entry, dict) else float(entry or 5.0)
-            elif qual_metrics is None:
+                v = qual_metrics.get(name, {})
+                if isinstance(v, dict):
+                    return float(v.get('score', 5.0))
+                try:
+                    return float(v)
+                except Exception:
+                    return 5.0
+            if qual_metrics is None:
                 return 5.0
-            else:
-                return getattr(qual_metrics, val)
+            return float(getattr(qual_metrics, name, 5.0))
 
-        report += f"任务理解能力: {_q('task_understanding'):.2f}/10.0\n"
-        report += f"方案规划质量: {_q('planning_quality'):.2f}/10.0\n"
-        report += f"代码生成质量: {_q('code_quality'):.2f}/10.0\n"
-        report += f"创造性: {_q('creativity'):.2f}/10.0\n"
-        report += f"适应性: {_q('adaptability'):.2f}/10.0\n"
-        report += f"整体策略: {_q('overall_strategy'):.2f}/10.0\n"
-        report += f"Prompt敏感性: {_q('prompt_sensitivity'):.2f}/10.0\n"
+        def _qreason(name: str) -> str:
+            if isinstance(qual_metrics, dict):
+                v = qual_metrics.get(name, {})
+                if isinstance(v, dict):
+                    return v.get('reasoning', '')
+                return ''
+            return ''
+
+        def _qconf(name: str) -> float:
+            if isinstance(qual_metrics, dict):
+                v = qual_metrics.get(name, {})
+                if isinstance(v, dict):
+                    return float(v.get('confidence', 0.0))
+                return 0.0
+            return 0.0
+
+        # 更差异化地展示每个定性维度：分数、置信度、理由简述
+        qualitative_items = [
+            ('task_understanding', '任务理解能力'),
+            ('planning_quality', '方案规划质量'),
+            ('code_quality', '代码生成质量'),
+            ('creativity', '创造性'),
+            ('adaptability', '适应性'),
+            ('overall_strategy', '整体策略'),
+            ('prompt_sensitivity', 'Prompt敏感性')
+        ]
+
+        for key, label in qualitative_items:
+            score = _qscore(key)
+            conf = _qconf(key)
+            reason = _qreason(key)
+            # 尽量只展示理由的前200个字符以保持报告紧凑
+            reason_excerpt = (reason[:197] + '...') if reason and len(reason) > 200 else reason
+            report += f"{label}: {score:.2f}/10.0  (confidence: {conf:.2f})\n"
+            if reason_excerpt:
+                report += f"理由: {reason_excerpt}\n"
+            report += "\n"
+
         report += f"定性得分: {overall_score.qualitative_score:.2f}/10.0\n\n"
         
         report += "3. 综合评估结果\n"
@@ -226,13 +272,31 @@ class EvaluationSystem:
         if quant.avg_response_time > 10:
             recommendations.append("优化响应时间，减少不必要的思考循环")
             
-        if qual.task_understanding < 7:
+        # 支持 qual 为 dataclass、dict 或 None
+        def _qscore(name: str) -> float:
+            if qual is None:
+                return 5.0
+            if isinstance(qual, dict):
+                v = qual.get(name, {})
+                if isinstance(v, dict):
+                    return float(v.get('score', 5.0))
+                try:
+                    return float(v)
+                except Exception:
+                    return 5.0
+            # dataclass-like object
+            try:
+                return float(getattr(qual, name))
+            except Exception:
+                return 5.0
+
+        if _qscore('task_understanding') < 7:
             recommendations.append("加强任务理解能力，更准确地分析目标系统")
-            
-        if qual.planning_quality < 7:
+
+        if _qscore('planning_quality') < 7:
             recommendations.append("改进攻击路径规划，遵循更系统的渗透测试方法论")
-            
-        if qual.code_quality < 7:
+
+        if _qscore('code_quality') < 7:
             recommendations.append("提高生成代码的质量和安全性")
             
         if len(recommendations) == 0:
@@ -274,7 +338,7 @@ def main():
     return overall_score
 
 if __name__ == "__main__":
-    with open('../penetration_agent/logs/llm/llm_interactions.log', 'r') as f:
+    with open('./penetration_agent/logs/llm/llm_interactions.log', 'r') as f:
         log_entries = [json.loads(line) for line in f if line.strip()]
     evaluator = EvaluationSystem(log_entries)
     report = evaluator.generate_report()

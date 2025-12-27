@@ -3,7 +3,7 @@
 - 操作系统：Ubuntu 20.04（windows wsl）
 - Python 3.10
 
-## 快速开始
+## 基础环境
 
 1. 创建并激活 conda 环境（基于项目根目录下的 requirements.txt）：
 ```bash
@@ -16,11 +16,6 @@ pip install -r requirements.txt
 ```bash
 python hexstrike-ai/hexstrike_server.py
 sudo apt update && sudo apt install whatweb
-```
-
-3. 编辑 `main.py`，根据需要指向不同的漏洞与目标 URL，然后运行：
-```bash
-python main.py
 ```
 
 ## 漏洞环境（vulnerables）构建与启动
@@ -39,7 +34,7 @@ docker compose up
 
 ## 渗透Agent（penetration_agent）
 
-## 渗透Agent结构
+#### 渗透Agent结构
 - phase_agent.py — 实现渗透 Agent 类及其操作。
 - storage.py — 基于异步全局变量（线程级独立）实现上下文存储。
 - logging_config.py — 日志相关配置与工具。
@@ -48,5 +43,16 @@ docker compose up
 - mcp_server.py — 封装 mcp 工具（依赖 hexstrike-ai 提供的工具集）。
 - main.py — 启动脚本，配置目标并运行 Agent。
 
+#### 运行渗透过程
+
+编辑 `main.py`，根据需要指向不同的漏洞与目标 URL，然后运行：
+```bash
+cd penetration_agent
+python main.py
+```
+
 ## 评估 Agent（estimate_agent）
-- 功能尚未完成（待实现评估策略与打分机制）。
+在渗透完成后，可以进行评估：
+```bash
+cd ./es_agent && python -m estimate_agent.evaluator
+```

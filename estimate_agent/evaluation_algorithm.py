@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List
 import statistics
 from collections import defaultdict
-from data_class import QuantitativeMetrics
+from .data_class import QuantitativeMetrics
 
 
 class EvaluationAlgorithm:

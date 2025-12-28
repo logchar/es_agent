@@ -56,7 +56,7 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
 
         result = await phase_manager.execute_single_agent(
             instruction=instruction,
-            context={"target_url": target_url},
+            context={"target_url": target_url, "challenge_code": challenge_code},
             max_rounds=max_rounds_per_phase
         )
 

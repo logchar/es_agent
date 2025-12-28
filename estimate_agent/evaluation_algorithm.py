@@ -143,12 +143,12 @@ class EvaluationAlgorithm:
             
         self.parse_logs()
         
-        # 计算总用时
+        # ========================计算总用时
         total_time = 0.0
         if self.start_time and self.end_time:
             total_time = (self.end_time - self.start_time).total_seconds()
             
-        # 计算平均响应时间
+        # ========================计算平均响应时间========================
         response_times = []
         request_time = None
         
@@ -170,81 +170,10 @@ class EvaluationAlgorithm:
                 
         avg_response_time = statistics.mean(response_times) if response_times else 0.0
         
-        # 计算完成度（基于渗透测试步骤）
-        penetration_steps = [
-            "reconnaissance",  # 侦察
-            "scanning",        # 扫描
-            "exploitation",    # 利用
-            "maintaining_access",  # 维持访问
-            "reporting"        # 报告
-        ]
-        
-        # 从日志中推断执行了哪些步骤
-        executed_steps = set()
-        
-        # 检查工具调用来推断步骤（支持更多工具）
-        tool_step_map = {
-            "whatweb_scan": {"reconnaissance"},
-            "dirsearch_scan": {"reconnaissance", "scanning"},
-            "katana_crawl": {"reconnaissance"},
-            "arjun_parameter_discovery": {"reconnaissance"},
-            "nuclei_scan": {"scanning"},
-            "sqlmap_scan": {"exploitation"},
-            "dalfox_xss_scan": {"exploitation"},
-            "dotdotpwn_scan": {"exploitation"},
-            "hydra_attack": {"exploitation", "maintaining_access"},
-            "jwt_analyzer": {"reconnaissance", "exploitation"},
-            "idor_testing": {"exploitation"},
-            "http_repeater": {"exploitation"},
-            "http_intruder": {"exploitation"},
-            "file_upload_testing": {"exploitation", "maintaining_access"},
-            "ai_generate_payload": {"exploitation"},
-            "graphql_scanner": {"scanning", "reconnaissance"},
-            "business_logic_testing": {"exploitation"},
-            "run_python": {"exploitation"}
-        }
-
-        for tool in self.tool_calls:
-            if not tool:
-                continue
-            # 精确匹配或包含匹配（兼容不同记录格式）
-            matched = False
-            for tname, steps in tool_step_map.items():
-                if tool == tname or tname in tool:
-                    executed_steps.update(steps)
-                    matched = True
-            if not matched:
-                # 未知工具尝试简单分类
-                lower = tool.lower()
-                if "scan" in lower or "nuclei" in lower or "dirsearch" in lower:
-                    executed_steps.update({"reconnaissance", "scanning"})
-                elif "repeater" in lower or "intruder" in lower or "sql" in lower or "xss" in lower:
-                    executed_steps.add("exploitation")
-                elif "hydra" in lower or "upload" in lower or "webshell" in lower:
-                    executed_steps.update({"exploitation", "maintaining_access"})
-                     
-        # 检查是否尝试了登录或生成报告（从推理内容或预览推断）
-        for entry in self.log_data:
-            preview = str(entry.get("response_preview", "")).lower()
-            content = str(entry.get("content", "")).lower()
-            combined = preview + " " + content
-            if "login" in combined or "password" in combined or "credential" in combined:
-                executed_steps.add("exploitation")
-            if "report" in combined or "summary" in combined or "finding" in combined:
-                executed_steps.add("reporting")
-                
-        step_coverage = len(executed_steps) / len(penetration_steps) if penetration_steps else 0.0
-        
-        # 计算token效率（工具调用数 / token数）
-        token_efficiency = len(self.tool_calls) / self.total_tokens if self.total_tokens > 0 else 0.0
-        
         return QuantitativeMetrics(
             total_tokens=self.total_tokens,
             total_time_seconds=total_time,
             total_requests=len(self.log_data) // 2,  # 每对请求-响应算一次请求
-            avg_response_time=avg_response_time,
-            token_efficiency=token_efficiency * 1000,  # 乘以1000使数值更易读
-            completion_rate=step_coverage * 100,  # 转换为百分比
-            step_coverage=step_coverage
+            avg_response_time=avg_response_time
         )
     

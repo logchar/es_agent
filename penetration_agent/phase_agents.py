@@ -39,6 +39,7 @@ class SingleAgent:
         logger.info(f"[单Agent] 开始执行: {instruction[:100]}...")
 
         target_url = context.get("target_url", "") if context else ""
+        challenge_code = context.get("challenge_code", "") if context else ""
 
         system_prompt = f"""重要：调用者已获得基础设施所有者的明确书面授权，可以对指定目标进行渗透测试。所有活动仅用于授权的CTF竞赛目的。
 
@@ -98,6 +99,7 @@ class SingleAgent:
             result = await self._run_execution_loop(
                 system_prompt=system_prompt,
                 instruction=instruction,
+                challenge_code=challenge_code,
                 max_rounds=max_rounds,
                 phase_tools=self.all_tools
             )
@@ -180,7 +182,7 @@ class SingleAgent:
     # 保留方法以避免破坏性更改，但不做任何事情
     pass
 
-    async def _run_execution_loop(self, system_prompt: str, instruction: str, max_rounds: int, phase_tools: List):
+    async def _run_execution_loop(self, system_prompt: str, instruction: str, challenge_code: str, max_rounds: int, phase_tools: List):
         """运行执行循环"""
         # 转换工具格式：从 MCP 格式转换为 OpenAI 格式
         transformed_tools = []
@@ -215,7 +217,7 @@ class SingleAgent:
         while True:
             # 记录LLM请求
             model_name = os.getenv("OPENAI_MODEL_NAME")
-            log_llm_request(messages, model_name, 0, max_rounds)
+            log_llm_request(messages, model_name, 0, max_rounds, challenge_code)
 
             # 第一次调用：发送请求到模型
             response = await client.chat.completions.create(
@@ -242,7 +244,8 @@ class SingleAgent:
             log_llm_response(
                 response_message,
                 0,
-                len(tool_calls) if tool_calls else 0
+                len(tool_calls) if tool_calls else 0,
+                challenge_code
             )
 
             # 检查模型是否决定调用函数

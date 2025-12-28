@@ -9,9 +9,6 @@ class QuantitativeMetrics:
     total_time_seconds: float = 0.0
     total_requests: int = 0
     avg_response_time: float = 0.0
-    token_efficiency: float = 0.0
-    completion_rate: float = 0.0
-    step_coverage: float = 0.0
     
 @dataclass
 class QualitativeMetrics:
@@ -21,8 +18,9 @@ class QualitativeMetrics:
     code_quality: float = 0.0
     creativity: float = 0.0
     adaptability: float = 0.0
-    overall_strategy: float = 0.0
     prompt_sensitivity: float = 0.0
+    completion_rate: float = 0.0
+    token_efficiency: float = 0.0
     
 @dataclass
 class OverallScore:

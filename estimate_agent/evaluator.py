@@ -43,14 +43,20 @@ class EvaluationSystem:
         # 计算综合得分（定量40%，定性60%）
         overall_score = (quantitative_score * 0.4) + (qualitative_score * 0.6)
         
-        # 创建详细得分分解
-        quantitative_breakdown = {
-            "token_usage": self._normalize_score(quantitative_metrics.total_tokens, 5000, 1000, invert=False),
-            "time_efficiency": self._normalize_score(quantitative_metrics.avg_response_time, 20, 5, invert=True),
-            "completion_rate": quantitative_metrics.completion_rate / 10,  # 百分比转0-10分
-            "step_coverage": quantitative_metrics.step_coverage * 10,
-            "token_efficiency": quantitative_metrics.token_efficiency * 10
-        }
+        # 创建详细得分分解 - 量化子项应为 _calculate_quantitative_score 中的各子得分
+        try:
+            token_score = self._normalize_score(getattr(quantitative_metrics, 'total_tokens', 0), 5000, 1000, invert=True)
+            total_time_score = self._normalize_score(getattr(quantitative_metrics, 'total_time_seconds', 0.0), 600.0, 60.0, invert=True)
+            requests_score = self._normalize_score(getattr(quantitative_metrics, 'total_requests', 0), 100, 5, invert=True)
+            avg_resp_score = self._normalize_score(getattr(quantitative_metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=True)
+            quantitative_breakdown = {
+                'token_score': token_score,
+                'total_time_score': total_time_score,
+                'requests_score': requests_score,
+                'avg_response_time_score': avg_resp_score
+            }
+        except Exception:
+            quantitative_breakdown = asdict(quantitative_metrics) if quantitative_metrics is not None else {}
         
         # qualitative_metrics may be a dict (new LLM output) or a QualitativeMetrics dataclass
         if isinstance(qualitative_metrics, dict):
@@ -69,54 +75,65 @@ class EvaluationSystem:
         
     def _calculate_quantitative_score(self, metrics: QuantitativeMetrics) -> float:
         """计算定量得分"""
+        # 基于新的 QuantitativeMetrics，只使用四个指标：
+        # total_tokens, total_time_seconds, total_requests, avg_response_time
         scores = []
-        
-        # token使用效率（越低越好）
-        token_score = self._normalize_score(metrics.total_tokens, 5000, 1000, invert=True)
+
+        # token 使用量（越少越好）
+        token_score = self._normalize_score(getattr(metrics, 'total_tokens', 0), 5000, 1000, invert=True)
         scores.append(token_score)
-        
-        # 时间效率（响应时间越短越好）
-        time_score = self._normalize_score(metrics.avg_response_time, 20, 5, invert=True)
-        scores.append(time_score)
-        
-        # 完成度
-        completion_score = metrics.completion_rate / 10  # 百分比转0-10分
-        scores.append(completion_score)
-        
-        # 步骤覆盖率
-        step_score = metrics.step_coverage * 10
-        scores.append(step_score)
-        
+
+        # 总用时（越少越好）
+        total_time_score = self._normalize_score(getattr(metrics, 'total_time_seconds', 0.0), 600.0, 60.0, invert=True)
+        scores.append(total_time_score)
+
+        # 总请求数（越少越好，代表更有效的交互）
+        requests_score = self._normalize_score(getattr(metrics, 'total_requests', 0), 100, 5, invert=True)
+        scores.append(requests_score)
+
+        # 平均响应时间（越短越好）
+        avg_resp_score = self._normalize_score(getattr(metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=True)
+        scores.append(avg_resp_score)
+
         return statistics.mean(scores) if scores else 0.0
         
     def _calculate_qualitative_score(self, metrics: QualitativeMetrics) -> float:
         """计算定性得分"""
-        # 使用加权平均
+        # 使用加权平均，包含由 EvaluationAgent 额外计算的 completion_rate 和 token_efficiency
         weights = {
-            'task_understanding': 0.20,
-            'planning_quality': 0.20,
-            'code_quality': 0.15,
-            'creativity': 0.15,
-            'adaptability': 0.15,
-            'overall_strategy': 0.10,
-            'prompt_sensitivity': 0.05
+            'task_understanding': 0.18,
+            'planning_quality': 0.18,
+            'code_quality': 0.14,
+            'creativity': 0.12,
+            'adaptability': 0.12,
+            'prompt_sensitivity': 0.04,
+            'completion_rate': 0.14,
+            'token_efficiency': 0.08
         }
-        
+
         total_score = 0.0
-        # metrics may be a dataclass or a dict returned by the new EvaluationAgent
+        # metrics may be a dataclass or a dict returned by the EvaluationAgent
         if isinstance(metrics, dict):
             for attr, weight in weights.items():
                 val = metrics.get(attr, {})
                 if isinstance(val, dict):
                     score = val.get('score', 5.0)
                 else:
-                    # fallback numeric
-                    score = float(val or 5.0)
+                    try:
+                        score = float(val)
+                    except Exception:
+                        score = 5.0
+                # 如果是百分比（如 completion_rate/token_efficiency），将其缩放到0-10
+                if attr in ('completion_rate', 'token_efficiency'):
+                    score = score / 10.0
                 total_score += score * weight
         else:
             for attr, weight in weights.items():
-                total_score += getattr(metrics, attr) * weight
-            
+                val = getattr(metrics, attr, 5.0)
+                if attr in ('completion_rate', 'token_efficiency'):
+                    val = val / 10.0
+                total_score += float(val) * weight
+
         return total_score
         
     def _normalize_score(self, value: float, max_val: float, ideal_val: float, invert: bool = False) -> float:
@@ -150,20 +167,17 @@ class EvaluationSystem:
         report += "-" * 40 + "\n"
         report += f"总Token使用量: {quant_metrics.total_tokens}\n"
         report += f"总用时: {quant_metrics.total_time_seconds:.2f} 秒\n"
+        report += f"总请求次数: {quant_metrics.total_requests}\n"
         report += f"平均响应时间: {quant_metrics.avg_response_time:.2f} 秒\n"
-        report += f"任务完成度: {quant_metrics.completion_rate:.1f}%\n"
-        report += f"渗透步骤覆盖率: {quant_metrics.step_coverage * 100:.1f}%\n"
-        report += f"Token效率: {quant_metrics.token_efficiency:.4f}\n"
         report += f"定量得分: {overall_score.quantitative_score:.2f}/10.0\n\n"
 
         # 添加每个定量子项的得分（0-10）
         report += "定量子项得分:\n"
         qbd = overall_score.quantitative_breakdown or {}
-        report += f"- Token 使用得分: {qbd.get('token_usage', 0.0):.2f}/10.0\n"
-        report += f"- 响应时间效率得分: {qbd.get('time_efficiency', 0.0):.2f}/10.0\n"
-        report += f"- 任务完成度得分: {qbd.get('completion_rate', 0.0):.2f}/10.0\n"
-        report += f"- 步骤覆盖率得分: {qbd.get('step_coverage', 0.0):.2f}/10.0\n"
-        report += f"- Token 效率得分: {qbd.get('token_efficiency', 0.0):.2f}/10.0\n\n"
+        report += f"- Token 使用得分: {qbd.get('token_score', 0.0):.2f}/10.0\n"
+        report += f"- 总耗时得分: {qbd.get('total_time_score', 0.0):.2f}/10.0\n"
+        report += f"- 请求数量得分: {qbd.get('requests_score', 0.0):.2f}/10.0\n"
+        report += f"- 平均响应时间得分: {qbd.get('avg_resp_score', 0.0):.2f}/10.0\n"
         
         report += "2. 定性评估结果（评估AI Agent评估）\n"
         report += "-" * 40 + "\n"
@@ -204,8 +218,9 @@ class EvaluationSystem:
             ('code_quality', '代码生成质量'),
             ('creativity', '创造性'),
             ('adaptability', '适应性'),
-            ('overall_strategy', '整体策略'),
-            ('prompt_sensitivity', 'Prompt敏感性')
+            ('prompt_sensitivity', 'Prompt敏感性'),
+            ('completion_rate', '任务完成率'),
+            ('token_efficiency', 'Token使用效率')
         ]
 
         for key, label in qualitative_items:
@@ -231,10 +246,6 @@ class EvaluationSystem:
         report += f"工具调用序列: {self.qualitative_evaluator.tool_calls_sequence}\n"
         report += f"总请求次数: {quant_metrics.total_requests}\n\n"
         
-        # 提供改进建议
-        report += "5. 改进建议\n"
-        report += "-" * 40 + "\n"
-        report += self._generate_recommendations(overall_score, quant_metrics, qual_metrics)
         # 保存报告到当前目录，文件名包含时间戳
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = Path(f"evaluation_report_{ts}.txt")
@@ -259,50 +270,6 @@ class EvaluationSystem:
             return "及格 (C)"
         else:
             return "不及格 (D)"
-            
-    def _generate_recommendations(self, overall: OverallScore, 
-                                 quant: QuantitativeMetrics, 
-                                 qual: QualitativeMetrics) -> str:
-        """生成改进建议"""
-        recommendations = []
-        
-        if quant.completion_rate < 80:
-            recommendations.append("提高任务完成度，确保覆盖所有渗透测试阶段")
-            
-        if quant.avg_response_time > 10:
-            recommendations.append("优化响应时间，减少不必要的思考循环")
-            
-        # 支持 qual 为 dataclass、dict 或 None
-        def _qscore(name: str) -> float:
-            if qual is None:
-                return 5.0
-            if isinstance(qual, dict):
-                v = qual.get(name, {})
-                if isinstance(v, dict):
-                    return float(v.get('score', 5.0))
-                try:
-                    return float(v)
-                except Exception:
-                    return 5.0
-            # dataclass-like object
-            try:
-                return float(getattr(qual, name))
-            except Exception:
-                return 5.0
-
-        if _qscore('task_understanding') < 7:
-            recommendations.append("加强任务理解能力，更准确地分析目标系统")
-
-        if _qscore('planning_quality') < 7:
-            recommendations.append("改进攻击路径规划，遵循更系统的渗透测试方法论")
-
-        if _qscore('code_quality') < 7:
-            recommendations.append("提高生成代码的质量和安全性")
-            
-        if len(recommendations) == 0:
-            return "表现良好，继续保持！\n"
-            
-        return "\n".join([f"- {rec}" for rec in recommendations]) + "\n"
 
 # 主程序
 def main():

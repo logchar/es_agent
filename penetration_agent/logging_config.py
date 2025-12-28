@@ -295,13 +295,14 @@ class LoggerManager:
         logger.handle(record)
 
     @classmethod
-    def log_llm_request(cls, messages: list, model: str, phase: int, max_rounds: int):
+    def log_llm_request(cls, messages: list, model: str, phase: int, max_rounds: int, challenge_code: Optional[str] = ""):
         """记录大模型请求（结构化）"""
         logger = cls.get_logger("llm")
         extra = {
             "event": "llm_request",
             "model": model,
             "phase": phase,
+            "challenge_code": challenge_code,
             "max_rounds": max_rounds,
             "messages_count": len(messages),
             "messages_preview": [
@@ -317,12 +318,13 @@ class LoggerManager:
         logger.handle(record)
 
     @classmethod
-    def log_llm_response(cls, response: Any, phase: int, tool_calls_count: int):
+    def log_llm_response(cls, response: Any, phase: int, tool_calls_count: int, challenge_code: Optional[str] = ""):
         """记录大模型响应（结构化）"""
         logger = cls.get_logger("llm")
         extra = {
             "event": "llm_response",
             "phase": phase,
+            "challenge_code": challenge_code,
             "tool_calls_count": tool_calls_count,
             "response_preview": str(response)[:1000] if response else None
         }
@@ -385,13 +387,13 @@ def log_tool_result(tool_name: str, result: Any, duration: float, success: bool)
     """记录工具执行结果的便捷函数"""
     LoggerManager.log_tool_result(tool_name, result, duration, success)
 
-def log_llm_request(messages: list, model: str, phase: int, max_rounds: int):
+def log_llm_request(messages: list, model: str, phase: int, max_rounds: int, challenge_code: Optional[str] = ""):
     """记录大模型请求的便捷函数"""
-    LoggerManager.log_llm_request(messages, model, phase, max_rounds)
+    LoggerManager.log_llm_request(messages, model, phase, max_rounds, challenge_code)
 
-def log_llm_response(response: Any, phase: int, tool_calls_count: int):
+def log_llm_response(response: Any, phase: int, tool_calls_count: int, challenge_code: Optional[str] = ""):
     """记录大模型响应的便捷函数"""
-    LoggerManager.log_llm_response(response, phase, tool_calls_count)
+    LoggerManager.log_llm_response(response, phase, tool_calls_count, challenge_code)
 
 def log_phase_start(phase: int, phase_name: str, target_url: str):
     """记录阶段开始的便捷函数"""

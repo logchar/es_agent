@@ -64,9 +64,9 @@ class LLMEvaluator:
         score = None
         score_pos = None
         patterns = [
+            r'评分[：:]\s*(\d+(?:\.\d+)?)(?:分|/10)?',
             r'综合评分[：:]\s*(\d+(?:\.\d+)?)(?:分|/10)?',
-            r'总分[：:]\s*(\d+(?:\.\d+)?)(?:分|/10)?',
-            r'评分[：:]\s*(\d+(?:\.\d+)?)(?:分|/10)?'
+            r'总分[：:]\s*(\d+(?:\.\d+)?)(?:分|/10)?'
         ]
 
         for p in patterns:
@@ -112,7 +112,7 @@ class LLMEvaluator:
                 reasoning = "未提供详细理由"
 
         # 基于响应长度计算置信度（越长通常信息越丰富），并限制在0-1之间
-        confidence = min(len(text) / 1000, 1.0)
+        confidence = min(len(text) / 800, 1.0)
 
         return EvaluationResult(score=score, reasoning=reasoning, confidence=confidence)
     

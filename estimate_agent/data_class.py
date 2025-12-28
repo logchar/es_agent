@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Any
 
 
 @dataclass
@@ -30,6 +30,8 @@ class OverallScore:
     overall_score: float = 0.0
     quantitative_breakdown: Dict[str, float] = None
     qualitative_breakdown: Dict[str, float] = None
+    quantitative_metrics: QuantitativeMetrics = None
+    qualitative_metrics: Any = None
     
     def __post_init__(self):
         if self.quantitative_breakdown is None:

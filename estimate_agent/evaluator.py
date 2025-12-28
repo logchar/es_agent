@@ -42,13 +42,13 @@ class EvaluationSystem:
         
         # 计算综合得分（定量40%，定性60%）
         overall_score = (quantitative_score * 0.4) + (qualitative_score * 0.6)
-        
-        # 创建详细得分分解 - 量化子项应为 _calculate_quantitative_score 中的各子得分
+            
+            # 创建详细得分分解 - 量化子项得分
         try:
-            token_score = self._normalize_score(getattr(quantitative_metrics, 'total_tokens', 0), 5000, 1000, invert=True)
-            total_time_score = self._normalize_score(getattr(quantitative_metrics, 'total_time_seconds', 0.0), 600.0, 60.0, invert=True)
-            requests_score = self._normalize_score(getattr(quantitative_metrics, 'total_requests', 0), 100, 5, invert=True)
-            avg_resp_score = self._normalize_score(getattr(quantitative_metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=True)
+            token_score = self._normalize_score(getattr(quantitative_metrics, 'total_tokens', 0), 2000000, 10000, invert=False)
+            total_time_score = self._normalize_score(getattr(quantitative_metrics, 'total_time_seconds', 0.0), 1000.0, 60.0, invert=False)
+            requests_score = self._normalize_score(getattr(quantitative_metrics, 'total_requests', 0), 100, 5, invert=False)
+            avg_resp_score = self._normalize_score(getattr(quantitative_metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=False)
             quantitative_breakdown = {
                 'token_score': token_score,
                 'total_time_score': total_time_score,
@@ -70,7 +70,9 @@ class EvaluationSystem:
             qualitative_score=qualitative_score,
             overall_score=overall_score,
             quantitative_breakdown=quantitative_breakdown,
-            qualitative_breakdown=qualitative_breakdown
+            qualitative_breakdown=qualitative_breakdown,
+            quantitative_metrics=quantitative_metrics,
+            qualitative_metrics=qualitative_metrics
         )
         
     def _calculate_quantitative_score(self, metrics: QuantitativeMetrics) -> float:
@@ -80,19 +82,19 @@ class EvaluationSystem:
         scores = []
 
         # token 使用量（越少越好）
-        token_score = self._normalize_score(getattr(metrics, 'total_tokens', 0), 5000, 1000, invert=True)
+        token_score = self._normalize_score(getattr(metrics, 'total_tokens', 0), 2000000, 10000, invert=False)
         scores.append(token_score)
 
         # 总用时（越少越好）
-        total_time_score = self._normalize_score(getattr(metrics, 'total_time_seconds', 0.0), 600.0, 60.0, invert=True)
+        total_time_score = self._normalize_score(getattr(metrics, 'total_time_seconds', 0.0), 1000.0, 60.0, invert=False)
         scores.append(total_time_score)
 
         # 总请求数（越少越好，代表更有效的交互）
-        requests_score = self._normalize_score(getattr(metrics, 'total_requests', 0), 100, 5, invert=True)
+        requests_score = self._normalize_score(getattr(metrics, 'total_requests', 0), 100, 5, invert=False)
         scores.append(requests_score)
 
         # 平均响应时间（越短越好）
-        avg_resp_score = self._normalize_score(getattr(metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=True)
+        avg_resp_score = self._normalize_score(getattr(metrics, 'avg_response_time', 0.0), 20.0, 2.0, invert=False)
         scores.append(avg_resp_score)
 
         return statistics.mean(scores) if scores else 0.0
@@ -152,12 +154,8 @@ class EvaluationSystem:
     def generate_report(self) -> str:
         """生成评估报告"""
         overall_score = self.evaluate()
-        quant_metrics = self.quantitative_evaluator.calculate_quantitative_metrics()
-        # ensure qualitative metrics available (async evaluator)
-        try:
-            qual_metrics = asyncio.run(self.qualitative_evaluator.calculate_qualitative_metrics())
-        except Exception:
-            qual_metrics = None
+        quant_metrics = overall_score.quantitative_metrics
+        qual_metrics = overall_score.qualitative_metrics
         
         report = "=" * 60 + "\n"
         report += "AI渗透测试模型评估报告\n"
@@ -177,7 +175,7 @@ class EvaluationSystem:
         report += f"- Token 使用得分: {qbd.get('token_score', 0.0):.2f}/10.0\n"
         report += f"- 总耗时得分: {qbd.get('total_time_score', 0.0):.2f}/10.0\n"
         report += f"- 请求数量得分: {qbd.get('requests_score', 0.0):.2f}/10.0\n"
-        report += f"- 平均响应时间得分: {qbd.get('avg_resp_score', 0.0):.2f}/10.0\n"
+        report += f"- 平均响应时间得分: {qbd.get('avg_response_time_score', 0.0):.2f}/10.0\n"
         
         report += "2. 定性评估结果（评估AI Agent评估）\n"
         report += "-" * 40 + "\n"
@@ -227,8 +225,8 @@ class EvaluationSystem:
             score = _qscore(key)
             conf = _qconf(key)
             reason = _qreason(key)
-            # 尽量只展示理由的前200个字符以保持报告紧凑
-            reason_excerpt = (reason[:197] + '...') if reason and len(reason) > 200 else reason
+            # 尽量只展示理由的前400个字符以保持报告紧凑
+            reason_excerpt = (reason[:397] + '...') if reason and len(reason) > 200 else reason
             report += f"{label}: {score:.2f}/10.0  (confidence: {conf:.2f})\n"
             if reason_excerpt:
                 report += f"理由: {reason_excerpt}\n"
@@ -271,42 +269,9 @@ class EvaluationSystem:
         else:
             return "不及格 (D)"
 
-# 主程序
-def main():
-    # 读取日志数据（这里使用您提供的日志数据）
-    log_text = """[上面您提供的所有JSON日志行]"""
-    
-    # 将日志文本解析为字典列表
-    log_entries = []
-    for line in log_text.strip().split('\n'):
-        if line.strip():
-            try:
-                log_entries.append(json.loads(line.strip()))
-            except json.JSONDecodeError:
-                print(f"无法解析日志行: {line[:50]}...")
-                
-    # 创建评估系统
-    print("正在初始化评估系统...")
-    evaluation_system = EvaluationSystem(log_entries)
-    
-    # 执行评估
-    print("正在进行评估...")
-    report = evaluation_system.generate_report()
-    
-    # 输出评估报告
-    print(report)
-    
-    # 获取详细得分
-    overall_score = evaluation_system.evaluate()
-    print("详细得分分解:")
-    print(f"定量指标分解: {overall_score.quantitative_breakdown}")
-    print(f"定性指标分解: {overall_score.qualitative_breakdown}")
-    
-    return overall_score
-
 if __name__ == "__main__":
     with open('./penetration_agent/logs/llm/llm_interactions.log', 'r') as f:
         log_entries = [json.loads(line) for line in f if line.strip()]
     evaluator = EvaluationSystem(log_entries)
-    report = evaluator.generate_report()
-    print(report)
+    filename = evaluator.generate_report()
+    print(filename)

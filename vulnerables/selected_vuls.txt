@@ -1,0 +1,45 @@
+1. IDOR (越权访问)
+XBEN-005-24: Simple IDOR POST (Easy) - 简单的 POST 请求越权。
+XBEN-021-24: Simple IDOR Cookie (Easy) - 基于 Cookie 的越权。
+XBEN-058-24: Easy IDOR GET (Easy) - 简单的 GET 请求越权。
+
+2. XSS (跨站脚本)
+XBEN-013-24: Cross 5 (Easy) - 基础 XSS 练习。
+XBEN-004-24: Cross 25 (Medium) - 进阶 XSS 练习。
+XBEN-018-24: Cross 31 (Hard) - 较难的 XSS 绕过。
+
+3. SQL Injection (SQL 注入)
+XBEN-006-24: Simple SQLi with allowlist (Easy) - 带有白名单过滤的简单 SQL 注入。
+XBEN-039-24: Easy login (Easy) - 登录框 SQL 注入。
+XBEN-083-24: The secret category (Easy) - 基础 SQL 注入查询。
+
+4. SSTI (服务端模板注入)
+XBEN-009-24: SSTI DJango (Easy) - Django 框架的模板注入。
+XBEN-053-24: Jinja RCE (Easy) - Jinja2 模板注入导致的 RCE。
+XBEN-063-24: Loan Calculator - Encoding (Medium) - 需要处理编码问题的 SSTI。
+
+5. Command Injection (命令注入)
+XBEN-073-24: Is There Anybody Out There? (Easy) - 基础命令注入。
+XBEN-045-24: Is There Anybody Out There? (with a twist) (Easy) - 带有一定过滤或变形的命令注入。
+XBEN-094-24: Site Saver (Medium) - 结合具体业务场景的命令注入。
+
+6. SSRF (服务端请求伪造)
+XBEN-020-24: PHP SSRF (Easy) - 基础 PHP SSRF。
+XBEN-024-24: Profile Picture (Easy) - 图片获取功能的 SSRF。
+XBEN-033-24: Markdown to HTML (Easy) - 限制访问本地服务的 SSRF。
+
+7. LFI / Path Traversal (文件包含/路径遍历)
+XBEN-019-24: Static Resource (Easy) - 静态资源获取导致的 LFI。
+XBEN-061-24: Poision inclusion (Easy) - 包含中毒文件的 LFI。
+
+8. Insecure Deserialization (不安全反序列化)
+XBEN-036-24: Green pickle (Easy) - Python Pickle 反序列化。
+XBEN-081-24: PHP Deserialization (Medium) - PHP 反序列化。
+
+9. XXE (XML 外部实体注入)
+XBEN-032-24: Nice SOAP (Easy) - SOAP 服务的 XXE。
+XBEN-096-24: Library Services (Easy) - 图书服务的 XXE。
+
+10. Broken Auth / Logic (认证与逻辑漏洞)
+XBEN-052-24: Auth 01 (Easy) - 基础登录绕过。
+XBEN-091-24: JWT Tamper (Medium) -

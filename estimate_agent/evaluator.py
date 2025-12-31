@@ -151,7 +151,7 @@ class EvaluationSystem:
             
         return score
         
-    def generate_report(self) -> str:
+    def generate_report(self, challenge_code: str = None, model_name: str = None) -> str:
         """生成评估报告"""
         overall_score = self.evaluate()
         quant_metrics = overall_score.quantitative_metrics
@@ -245,8 +245,15 @@ class EvaluationSystem:
         report += f"总请求次数: {quant_metrics.total_requests}\n\n"
         
         # 保存报告到当前目录，文件名包含时间戳
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = Path(f"evaluation_report_{ts}.txt")
+        output_dir = Path("eval_results")
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        if challenge_code and model_name:
+            filename = output_dir / f"{challenge_code}_{model_name}.txt"
+        else:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = output_dir / f"evaluation_report_{ts}.txt"
         try:
             filename.write_text(report, encoding="utf-8")
         except Exception:
@@ -273,5 +280,10 @@ if __name__ == "__main__":
     with open('./penetration_agent/logs/llm/llm_interactions.log', 'r') as f:
         log_entries = [json.loads(line) for line in f if line.strip()]
     evaluator = EvaluationSystem(log_entries)
-    filename = evaluator.generate_report()
+    
+    challenge_codes = [e.get('challenge_code') for e in log_entries if e.get('challenge_code')]
+    challenge_code = challenge_codes[0] if challenge_codes else "unknown_challenge"
+    model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")
+    
+    filename = evaluator.generate_report(challenge_code=challenge_code, model_name=model_name)
     print(filename)

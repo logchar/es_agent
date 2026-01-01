@@ -9,13 +9,13 @@ import os
 import logging
 
 
-def setup_logging():
+def setup_logging(challenge_code: str = "", model_name: str = ""):
     """设置日志配置 - 使用新的JSON结构化日志系统"""
     from logging_config import LoggerManager
 
     # 初始化JSON结构化日志系统
     # DEBUG模式启用详细日志记录
-    LoggerManager.initialize(log_dir="logs", debug_mode=True)
+    LoggerManager.initialize(log_dir="logs", debug_mode=True, challenge_code=challenge_code, model_name=model_name, reset=True)
 
 
 def create_openai_client():

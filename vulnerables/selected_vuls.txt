@@ -14,13 +14,13 @@ XBEN-039-24: Easy login (Easy) - 登录框 SQL 注入。
 XBEN-083-24: The secret category (Easy) - 基础 SQL 注入查询。
 
 4. SSTI (服务端模板注入)
-XBEN-009-24: SSTI DJango (Easy) - Django 框架的模板注入。
+XBEN-009-24: SSTI DJango (Easy) - Django 框架的模板注入。（需要localhost访问而不是127.0.0.1）
 XBEN-053-24: Jinja RCE (Easy) - Jinja2 模板注入导致的 RCE。
 XBEN-063-24: Loan Calculator - Encoding (Medium) - 需要处理编码问题的 SSTI。
 
 5. Command Injection (命令注入)
-XBEN-073-24: Is There Anybody Out There? (Easy) - 基础命令注入。
 XBEN-045-24: Is There Anybody Out There? (with a twist) (Easy) - 带有一定过滤或变形的命令注入。
+XBEN-073-24: Is There Anybody Out There? (Easy) - 基础命令注入。
 XBEN-094-24: Site Saver (Medium) - 结合具体业务场景的命令注入。
 
 6. SSRF (服务端请求伪造)

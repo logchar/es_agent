@@ -100,10 +100,19 @@ class LoggerManager:
     _initialized = False
 
     @classmethod
-    def initialize(cls, log_dir: str = "logs", debug_mode: bool = True):
+    def initialize(cls, log_dir: str = "logs", debug_mode: bool = True, challenge_code: str = "", model_name: str = "", reset: bool = False):
         """初始化日志系统"""
         if cls._initialized:
-            return
+            if not reset:
+                return
+            
+            # 如果请求重置，清理现有处理器
+            for logger in cls._loggers.values():
+                for handler in logger.handlers[:]:
+                    logger.removeHandler(handler)
+                    handler.close()
+            cls._handlers.clear()
+            # 不清除 cls._loggers，因为 logger 实例是持久的，我们只是替换处理器
 
         # 创建日志目录
         os.makedirs(log_dir, exist_ok=True)
@@ -117,13 +126,20 @@ class LoggerManager:
         log_level = logging.DEBUG if debug_mode else logging.INFO
         logging.getLogger().setLevel(log_level)
 
+        # 构建文件名后缀
+        suffix = ""
+        if challenge_code:
+            suffix += f"_{challenge_code}"
+        if model_name:
+            suffix += f"_{model_name}"
+
         # 1. 创建通用应用日志记录器
         app_logger = logging.getLogger("app")
         app_logger.setLevel(log_level)
 
         # 通用日志文件处理器
         app_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/app/application.log",
+            f"{log_dir}/app/application{suffix}.log",
             maxBytes=500*1024*1024,  # 500MB
             backupCount=5
         )
@@ -145,7 +161,7 @@ class LoggerManager:
 
         # 工具日志文件处理器
         tools_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/tools/tools_execution.log",
+            f"{log_dir}/tools/tools_execution{suffix}.log",
             maxBytes=500*1024*1024,  # 500MB
             backupCount=5
         )
@@ -160,7 +176,7 @@ class LoggerManager:
 
         # 大模型日志文件处理器
         llm_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/llm/llm_interactions.log",
+            f"{log_dir}/llm/llm_interactions{suffix}.log",
             maxBytes=500*1024*1024,  # 500MB
             backupCount=5
         )
@@ -173,7 +189,7 @@ class LoggerManager:
         mcp_logger = logging.getLogger("mcp")
         mcp_logger.setLevel(log_level)
         mcp_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/app/mcp_server.log",
+            f"{log_dir}/app/mcp_server{suffix}.log",
             maxBytes=500*1024*1024,
             backupCount=5
         )
@@ -186,7 +202,7 @@ class LoggerManager:
         ctf_logger = logging.getLogger("hexstrike-ctf-api")
         ctf_logger.setLevel(log_level)
         ctf_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/app/ctf_api.log",
+            f"{log_dir}/app/ctf_api{suffix}.log",
             maxBytes=500*1024*1024,
             backupCount=5
         )
@@ -199,7 +215,7 @@ class LoggerManager:
         storage_logger = logging.getLogger("storage")
         storage_logger.setLevel(log_level)
         storage_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/app/storage.log",
+            f"{log_dir}/app/storage{suffix}.log",
             maxBytes=500*1024*1024,
             backupCount=5
         )
@@ -212,7 +228,7 @@ class LoggerManager:
         phase_logger = logging.getLogger("phase_agents")
         phase_logger.setLevel(log_level)
         phase_file_handler = SizedRotatingFileHandler(
-            f"{log_dir}/app/phase_agents.log",
+            f"{log_dir}/app/phase_agents{suffix}.log",
             maxBytes=500*1024*1024,
             backupCount=5
         )

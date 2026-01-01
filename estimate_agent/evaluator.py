@@ -277,13 +277,47 @@ class EvaluationSystem:
             return "不及格 (D)"
 
 if __name__ == "__main__":
-    with open('./penetration_agent/logs/llm/llm_interactions.log', 'r') as f:
-        log_entries = [json.loads(line) for line in f if line.strip()]
-    evaluator = EvaluationSystem(log_entries)
+    log_dir = Path('./penetration_agent/logs/llm')
+    log_files = list(log_dir.glob('llm_interactions_*.log'))
     
-    challenge_codes = [e.get('challenge_code') for e in log_entries if e.get('challenge_code')]
-    challenge_code = challenge_codes[0] if challenge_codes else "unknown_challenge"
-    model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")
-    
-    filename = evaluator.generate_report(challenge_code=challenge_code, model_name=model_name)
-    print(filename)
+    if not log_files:
+        print("No log files found.")
+        exit(0)
+    print(f"Found {len(log_files)} log files to evaluate.")
+
+    for log_file in log_files:
+        print(f"\nProcessing {log_file.name}...")
+        
+        # Extract info from filename
+        # Filename format: llm_interactions_{challenge_code}_{model_name}.log
+        filename_stem = log_file.stem # llm_interactions_...
+        
+        # Remove prefix
+        if filename_stem.startswith('llm_interactions_'):
+            rest = filename_stem[len('llm_interactions_'):]
+            # Try to split into challenge_code and model_name
+            # Assuming challenge_code does not contain underscores
+            parts = rest.split('_', 1)
+            if len(parts) == 2:
+                challenge_code = parts[0]
+                model_name = parts[1]
+            else:
+                # Fallback or handle cases where one might be missing
+                challenge_code = parts[0]
+                model_name = "unknown_model"
+        else:
+            challenge_code = "unknown_challenge"
+            model_name = "unknown_model"
+        print(f"Extracted - Challenge: {challenge_code}, Model: {model_name}")
+
+        try:
+            with open(log_file, 'r') as f:
+                log_entries = [json.loads(line) for line in f if line.strip()]
+            if not log_entries:
+                print(f"Skipping empty log file: {log_file}")
+                continue
+            evaluator = EvaluationSystem(log_entries)
+            report_path = evaluator.generate_report(challenge_code=challenge_code, model_name=model_name)
+            print(f"Report generated: {report_path}")
+        except Exception as e:
+            print(f"Error processing {log_file}: {e}")

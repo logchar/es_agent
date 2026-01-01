@@ -30,6 +30,11 @@ docker compose build --build-arg FLAG="FLAG{...}" --build-arg flag="FLAG{...}"
 docker compose up
 ```
 
+- 运行下面的命令，查看端口映射关系，注意访问物理机端口
+```bash
+docker ps -a
+```
+
 - 项目目录下有 `common.mk`，可用于一键构建/管理所有漏洞环境。
 
 ## 渗透Agent（penetration_agent）

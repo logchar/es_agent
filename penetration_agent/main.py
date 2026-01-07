@@ -121,7 +121,9 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
 
 
 async def main():
-    challenge_code = "XBEN-009-24"
+    challenge_code = "XBEN-052-24"
+    ip = "127.0.0.1"
+    port = [32775]
     model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")
 
     # 设置日志
@@ -129,7 +131,7 @@ async def main():
 
     result = await run_ctf_challenge_phase_based(
         challenge_code=challenge_code,
-        target_info={"ip": "localhost", "port": [32769]},
+        target_info={"ip": ip, "port": port},
         max_rounds_per_phase=50
     )
 

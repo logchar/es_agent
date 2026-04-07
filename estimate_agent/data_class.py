@@ -13,6 +13,7 @@ class QuantitativeMetrics:
 @dataclass
 class QualitativeMetrics:
     """定性评估指标（由评估AI Agent评估）"""
+    decision_drift: float = 0.0
     task_understanding: float = 0.0
     planning_quality: float = 0.0
     code_quality: float = 0.0

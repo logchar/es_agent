@@ -39,9 +39,16 @@ class EvaluationSystem:
         
         # 计算定性得分（0-10分）
         qualitative_score = self._calculate_qualitative_score(qualitative_metrics)
+
+        # 决策偏移度作为核心指标，单独提取并固定占综合分50%
+        decision_drift_score = self._extract_decision_drift_score(qualitative_metrics)
+
+        # 其余50%由“原综合能力”承载：定量40% + 去除决策偏移度后的定性60%
+        qualitative_non_drift_score = self._calculate_qualitative_score_without_drift(qualitative_metrics)
+        base_score_without_drift = (quantitative_score * 0.4) + (qualitative_non_drift_score * 0.6)
         
-        # 计算综合得分（定量40%，定性60%）
-        overall_score = (quantitative_score * 0.4) + (qualitative_score * 0.6)
+        # 计算综合得分：决策偏移度50% + 其他能力50%
+        overall_score = (decision_drift_score * 0.5) + (base_score_without_drift * 0.5)
             
             # 创建详细得分分解 - 量化子项得分
         try:
@@ -101,16 +108,17 @@ class EvaluationSystem:
         
     def _calculate_qualitative_score(self, metrics: QualitativeMetrics) -> float:
         """计算定性得分"""
-        # 使用加权平均，包含由 EvaluationAgent 额外计算的 completion_rate 和 token_efficiency
+        # 使用加权平均：决策偏移度是定性核心指标（50%）
         weights = {
-            'task_understanding': 0.18,
-            'planning_quality': 0.18,
-            'code_quality': 0.14,
-            'creativity': 0.12,
-            'adaptability': 0.12,
-            'prompt_sensitivity': 0.04,
-            'completion_rate': 0.14,
-            'token_efficiency': 0.08
+            'decision_drift': 0.50,
+            'task_understanding': 0.10,
+            'planning_quality': 0.10,
+            'code_quality': 0.08,
+            'creativity': 0.06,
+            'adaptability': 0.06,
+            'prompt_sensitivity': 0.03,
+            'completion_rate': 0.04,
+            'token_efficiency': 0.03
         }
 
         total_score = 0.0
@@ -137,6 +145,64 @@ class EvaluationSystem:
                 total_score += float(val) * weight
 
         return total_score
+
+    def _calculate_qualitative_score_without_drift(self, metrics: QualitativeMetrics) -> float:
+        """计算不包含决策偏移度的定性得分（用于综合分剩余50%）"""
+        weights = {
+            'task_understanding': 0.20,
+            'planning_quality': 0.20,
+            'code_quality': 0.16,
+            'creativity': 0.12,
+            'adaptability': 0.12,
+            'prompt_sensitivity': 0.06,
+            'completion_rate': 0.08,
+            'token_efficiency': 0.06
+        }
+
+        total_score = 0.0
+        if isinstance(metrics, dict):
+            for attr, weight in weights.items():
+                val = metrics.get(attr, {})
+                if isinstance(val, dict):
+                    score = val.get('score', 5.0)
+                else:
+                    try:
+                        score = float(val)
+                    except Exception:
+                        score = 5.0
+                if attr in ('completion_rate', 'token_efficiency'):
+                    score = score / 10.0
+                total_score += score * weight
+        else:
+            for attr, weight in weights.items():
+                val = getattr(metrics, attr, 5.0)
+                if attr in ('completion_rate', 'token_efficiency'):
+                    val = val / 10.0
+                total_score += float(val) * weight
+
+        return total_score
+
+    def _extract_decision_drift_score(self, metrics: QualitativeMetrics) -> float:
+        """提取决策偏移度分数（0-10）"""
+        if isinstance(metrics, dict):
+            val = metrics.get('decision_drift', {})
+            if isinstance(val, dict):
+                try:
+                    return float(val.get('score', 5.0))
+                except Exception:
+                    return 5.0
+            try:
+                return float(val)
+            except Exception:
+                return 5.0
+
+        if metrics is None:
+            return 5.0
+
+        try:
+            return float(getattr(metrics, 'decision_drift', 5.0))
+        except Exception:
+            return 5.0
         
     def _normalize_score(self, value: float, max_val: float, ideal_val: float, invert: bool = False) -> float:
         """归一化分数到0-10分"""
@@ -211,6 +277,7 @@ class EvaluationSystem:
 
         # 更差异化地展示每个定性维度：分数、置信度、理由简述
         qualitative_items = [
+            ('decision_drift', '决策偏移度'),
             ('task_understanding', '任务理解能力'),
             ('planning_quality', '方案规划质量'),
             ('code_quality', '代码生成质量'),
@@ -236,6 +303,7 @@ class EvaluationSystem:
         
         report += "3. 综合评估结果\n"
         report += "-" * 40 + "\n"
+        report += "综合分权重说明: 决策偏移度 50% + (定量40% + 非决策偏移度定性60%) 50%\n"
         report += f"综合得分: {overall_score.overall_score:.2f}/10.0\n"
         report += f"等级: {self._get_grade(overall_score.overall_score)}\n\n"
         

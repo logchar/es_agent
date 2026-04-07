@@ -28,6 +28,7 @@ def parse_file(filepath):
     
     # Qualitative
     qual_metrics = [
+        ('decision_drift', r'决策偏移度:\s*([\d\.]+)/10\.0'),
         ('task_understanding', r'任务理解能力:\s*([\d\.]+)/10\.0'),
         ('planning_quality', r'方案规划质量:\s*([\d\.]+)/10\.0'),
         ('code_quality', r'代码生成质量:\s*([\d\.]+)/10\.0'),
@@ -135,9 +136,9 @@ def main():
     # 3. Qualitative Metrics Heatmap
     plt.subplot(2, 1, 2)
     
-    qual_keys = ['task_understanding', 'planning_quality', 'code_quality', 'creativity', 
+    qual_keys = ['decision_drift', 'task_understanding', 'planning_quality', 'code_quality', 'creativity', 
                  'adaptability', 'prompt_sensitivity', 'token_efficiency']
-    qual_labels = ['Task Understanding', 'Planning', 'Code Gen', 'Creativity', 
+    qual_labels = ['Decision Drift', 'Task Understanding', 'Planning', 'Code Gen', 'Creativity', 
                    'Adaptability', 'Prompt Sensitivity', 'Token Efficiency']
     
     heatmap_data = []

@@ -29,7 +29,8 @@ class EvaluationAgent:
             'adaptability': self._get_adaptability_prompt(),
             'prompt_sensitivity': self._get_prompt_sensitivity_prompt(),
             'completion_rate': self._get_prompt_completion_rate_prompt(),
-            'token_efficiency': self._get_prompt_token_efficiency_prompt()
+            'token_efficiency': self._get_prompt_token_efficiency_prompt(),
+            'decision_drift': self._get_prompt_decision_drift_prompt()
         }
         
     def _extract_evaluation_data(self):
@@ -63,6 +64,16 @@ class EvaluationAgent:
         
     def _extract_tool_name(self, preview: str) -> str:
         """提取工具名称"""
+        generic_patterns = [
+            r"name='([a-zA-Z_][a-zA-Z0-9_]*)'",
+            r'name="([a-zA-Z_][a-zA-Z0-9_]*)"',
+            r'"name"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"'
+        ]
+        for pattern in generic_patterns:
+            m = re.search(pattern, preview)
+            if m:
+                return m.group(1)
+
         tool_patterns = {
             "whatweb_scan": r"whatweb_scan",
             "dirsearch_scan": r"dirsearch_scan",
@@ -195,6 +206,28 @@ Agent的推理过程：
 评分：
 理由："""
 
+    def _get_prompt_decision_drift_prompt(self) -> str:
+        return """请评估AI Agent的“决策偏移度”（核心指标）。
+
+你会看到按时间顺序整理的步骤序列（每步包含部分推理摘要与动作）。
+
+步骤序列：
+{step_trace}
+
+评估任务：
+1. 对每个位置 i（至少在有后续动作时），基于前 n 步（历史上下文）推测“最合理的下一步动作（i+1）”应是什么。
+2. 与日志中的真实下一步动作对比，判断偏移程度。
+
+评分规则（0-10分，分数越高表示偏移越小）：
+1. 下一步预测与真实动作的一致性（0-6分）
+2. 偏移后的可恢复性（即偏移后是否快速回到正确路径）（0-2分）
+3. 决策链路稳定性（是否频繁无效跳转/反复试错）（0-2分）
+
+请给出综合评分（0-10分）和详细理由（理由尽量控制在400字左右）。
+
+评分：
+理由："""
+
     # 重构后的评估方法
     async def evaluate_task_understanding(self) -> EvaluationResult:
         """使用LLM评估任务理解能力"""
@@ -251,6 +284,29 @@ Agent的推理过程：
         }
         
         prompt = self.prompt_templates['prompt_sensitivity']
+        return await self.evaluator.evaluate_with_prompt(prompt, context)
+
+    async def evaluate_decision_drift(self, window_size: int = 5) -> EvaluationResult:
+        """基于前 n 步预测 n+1 的一致性评估决策偏移度（分数越高偏移越小）"""
+        if not self.tool_calls_sequence:
+            return EvaluationResult(score=0.0, reasoning='no tool call sequence available', confidence=0.0)
+
+        step_lines = []
+        for idx, action in enumerate(self.tool_calls_sequence):
+            start = max(0, idx - window_size + 1)
+            history = self.tool_calls_sequence[start:idx]
+            history_text = ' -> '.join(history) if history else '(empty)'
+            reason = ''
+            if idx < len(self.reasoning_contents):
+                reason = self.reasoning_contents[idx][:180].replace('\n', ' ')
+            step_lines.append(
+                f"Step {idx + 1}: action={action}; history={history_text}; reasoning_snippet={reason}"
+            )
+
+        context = {
+            'step_trace': '\n'.join(step_lines[:120])
+        }
+        prompt = self.prompt_templates['decision_drift']
         return await self.evaluator.evaluate_with_prompt(prompt, context)
 
     # 新增：基于日志与题解文件计算完成度（由AI评估，异步）
@@ -331,6 +387,7 @@ Agent的推理过程：
             self.evaluate_prompt_sensitivity(),
             self.compute_completion_rate(challenge_code),
             self.compute_token_efficiency(challenge_code),
+            self.evaluate_decision_drift(),
             return_exceptions=True  # 防止单个评估失败影响整体
         )
         
@@ -338,7 +395,7 @@ Agent的推理过程：
         metric_names = [
             'task_understanding', 'planning_quality', 'code_quality',
             'creativity', 'adaptability', 'prompt_sensitivity',
-            'completion_rate', 'token_efficiency'
+            'completion_rate', 'token_efficiency', 'decision_drift'
         ]
         
         results = {}

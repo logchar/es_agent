@@ -6,13 +6,14 @@ import json
 import logging
 import asyncio
 import time
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import client
+from config import client, estimate_client
 # from tools import HexStrikeClient
 from mcp_client import get_mcp_client, call_mcp_tool, list_mcp_tools
 from storage import get_current_usage_tracker, get_current_target_url, ChallengeContext
@@ -182,6 +183,121 @@ class SingleAgent:
     # 保留方法以避免破坏性更改，但不做任何事情
     pass
 
+    def _resolve_llm_log_file(self, challenge_code: str, penetration_model_name: str) -> Optional[Path]:
+        """解析当前题目的LLM日志文件路径。"""
+        base_dir = Path(__file__).resolve().parent / "logs" / "llm"
+        if not base_dir.exists():
+            return None
+
+        if challenge_code:
+            exact_path = base_dir / f"llm_interactions_{challenge_code}_{penetration_model_name}.log"
+            if exact_path.exists():
+                return exact_path
+
+            candidates = sorted(base_dir.glob(f"llm_interactions_{challenge_code}_*.log"), key=lambda p: p.stat().st_mtime)
+            if candidates:
+                return candidates[-1]
+
+        generic = base_dir / "llm_interactions.log"
+        if generic.exists():
+            return generic
+        return None
+
+    def _read_recent_log_context(self, log_file: Path, max_entries: int = 25, max_chars: int = 12000) -> str:
+        """读取最近LLM日志并转换为用于生成下一轮指令的上下文文本。"""
+        if not log_file or not log_file.exists():
+            return ""
+
+        lines: List[str] = []
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logger.warning(f"[单Agent] 读取日志文件失败: {log_file}, error={e}")
+            return ""
+
+        for raw in raw_lines[-max_entries:]:
+            try:
+                entry = json.loads(raw)
+            except Exception:
+                continue
+
+            event = entry.get("event", "")
+            timestamp = entry.get("timestamp", "")
+            if event == "llm_request":
+                model = entry.get("model", "")
+                msg_count = entry.get("messages_count", 0)
+                lines.append(f"[{timestamp}] REQUEST model={model} messages_count={msg_count}")
+            elif event == "llm_response":
+                tool_calls_count = entry.get("tool_calls_count", 0)
+                preview = str(entry.get("response_preview", ""))
+                if len(preview) > 1200:
+                    preview = preview[:1200] + "..."
+                lines.append(f"[{timestamp}] RESPONSE tool_calls={tool_calls_count} preview={preview}")
+
+        context = "\n".join(lines)
+        if len(context) > max_chars:
+            context = context[-max_chars:]
+        return context
+
+    async def _generate_instruction_from_logs(
+        self,
+        challenge_code: str,
+        base_instruction: str,
+        penetration_model_name: str,
+        rounds_completed: int
+    ) -> Optional[str]:
+        """使用评估模型基于渗透模型日志生成下一轮指令。"""
+        if estimate_client is None:
+            logger.warning("[单Agent] estimate_client 不可用，跳过指令增强")
+            return None
+
+        estimate_model_name = os.getenv("ESTIMATE_MODEL_NAME")
+        if not estimate_model_name:
+            logger.warning("[单Agent] ESTIMATE_MODEL_NAME 未设置，跳过指令增强")
+            return None
+
+        log_file = self._resolve_llm_log_file(challenge_code, penetration_model_name)
+        if not log_file:
+            logger.warning("[单Agent] 未找到对应的LLM日志文件，跳过指令增强")
+            return None
+
+        log_context = self._read_recent_log_context(log_file)
+        if not log_context:
+            logger.warning("[单Agent] 日志上下文为空，跳过指令增强")
+            return None
+
+        guidance_system = (
+            "你是CTF渗透测试任务的指挥官。"
+            "请根据历史执行日志，给渗透执行模型下一轮高价值、可执行的指令。"
+            "输出要求：仅输出一段Instruction正文，不要解释，不要Markdown，不要代码块。"
+            "内容需包含：当前关键发现、下一步优先操作、明确工具建议、停止低价值重复动作。"
+        )
+        guidance_user = (
+            f"挑战编号: {challenge_code or 'unknown'}\n"
+            f"当前轮次: 第{rounds_completed + 1}轮\n"
+            f"初始任务说明:\n{base_instruction}\n\n"
+            f"最近执行日志:\n{log_context}\n\n"
+            "请生成下一轮给执行模型的Instruction。"
+        )
+
+        try:
+            response = await estimate_client.chat.completions.create(
+                model=estimate_model_name,
+                messages=[
+                    {"role": "system", "content": guidance_system},
+                    {"role": "user", "content": guidance_user}
+                ],
+                temperature=0.3
+            )
+            generated = response.choices[0].message.content if response and response.choices else None
+            if generated:
+                return generated.strip()
+        except Exception as e:
+            logger.warning(f"[单Agent] 生成下一轮Instruction失败: {e}")
+
+        return None
+
     async def _run_execution_loop(self, system_prompt: str, instruction: str, challenge_code: str, max_rounds: int, phase_tools: List):
         """运行执行循环"""
         # 转换工具格式：从 MCP 格式转换为 OpenAI 格式
@@ -215,8 +331,21 @@ class SingleAgent:
         rounds_completed = 0
         # 简化版本：不做消息总结，直接使用固定窗口
         while True:
-            # 记录LLM请求
             model_name = os.getenv("OPENAI_MODEL_NAME")
+
+            # 从第二轮开始，由评估模型根据渗透日志生成下一轮指令
+            if rounds_completed >= 1:
+                generated_instruction = await self._generate_instruction_from_logs(
+                    challenge_code=challenge_code,
+                    base_instruction=instruction,
+                    penetration_model_name=model_name,
+                    rounds_completed=rounds_completed
+                )
+                if generated_instruction:
+                    messages[1]["content"] = generated_instruction
+                    logger.info(f"[单Agent] 第{rounds_completed + 1}轮使用评估模型生成的Instruction")
+
+            # 记录LLM请求
             log_llm_request(messages, model_name, 0, max_rounds, challenge_code)
 
             # 第一次调用：发送请求到模型

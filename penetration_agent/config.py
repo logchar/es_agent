@@ -55,9 +55,49 @@ def create_openai_client():
     return client
 
 
+def create_estimate_client():
+    """
+    创建评估用OpenAI客户端的工厂函数
+    允许配置独立的API Key和Base URL
+    """
+    from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+
+    # 优先尝试加载独立的评估KEY
+    api_key = os.getenv("ESTIMATE_API_KEY")
+
+    if not api_key:
+        # 如果都没有，返回None，由调用方处理（或者打印警告）
+        print("警告：未设置 ESTIMATE_API_KEY 或 OPENAI_API_KEY，评估功能可能受限")
+        return None
+
+    # 检查并配置代理
+    proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+    http_client_instance = None
+
+    if proxy_url:
+        http_client_instance = DefaultAsyncHttpxClient()
+    else:
+        http_client_instance = None
+
+    # 初始化客户端
+    # 优先使用独立的Base URL
+    base_url = os.getenv("ESTIMATE_BASE_URL")
+    
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        http_client=http_client_instance
+    )
+
+    return client
+
+
 try:
     client = create_openai_client()
+    estimate_client = create_estimate_client()
+    print("OpenAI客户端创建成功")
 except Exception as e:
     print(f"创建OpenAI客户端失败: {e}")
     print("CTF工具可能仍然可用，但AI功能将不可用")
     client = None
+    estimate_client = None

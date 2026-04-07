@@ -12,7 +12,7 @@ class EvaluationResult:
 class LLMEvaluator:
     """LLM评估器基类"""
     
-    def __init__(self, client: Any, model: str = "doubao-seed-1-6-251015"):
+    def __init__(self, client: Any, model):
         self.client = client
         self.model = model
         self.temperature = 0.1  # 低温度以获得更一致的评估

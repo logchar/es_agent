@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 import re
 import glob
 import matplotlib
@@ -48,7 +49,17 @@ def parse_file(filepath):
 
 def main():
     directory = os.path.dirname(os.path.abspath(__file__))
-    files = glob.glob(os.path.join(directory, 'XBEN-*.txt'))
+    
+    # Explicitly load .env from penetration_agent folder
+    env_path = os.path.join(directory, '..', 'penetration_agent', '.env')
+    load_dotenv(env_path)
+    
+    target_model = os.getenv("ESTIMATE_TARGET_MODEL")
+    if target_model:
+        print(f"Filtering for model: {target_model}")
+        files = glob.glob(os.path.join(directory, f'XBEN-*_{target_model}.txt'))
+    else:
+        files = glob.glob(os.path.join(directory, 'XBEN-*.txt'))
     
     data = []
     model_name = "Unknown"
@@ -150,7 +161,13 @@ def main():
                            ha="center", va="center", color="w" if heatmap_data[i, j] < 7 else "black")
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    output_path = os.path.join(directory, 'model_performance_analysis.png')
+    
+    if target_model:
+        output_filename = f'model_performance_analysis_{target_model}.png'
+    else:
+        output_filename = 'model_performance_analysis.png'
+        
+    output_path = os.path.join(directory, output_filename)
     plt.savefig(output_path)
     print(f"Chart saved to: {output_path}")
 

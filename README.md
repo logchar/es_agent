@@ -18,6 +18,16 @@ python hexstrike-ai/hexstrike_server.py
 sudo apt update && sudo apt install whatweb
 ```
 
+3. 如果需要补充训练数据，可以运行构建脚本：
+```bash
+conda activate es_agent
+python -m estimate_agent.build_training_data
+```
+运行完之后使用下面的命令，合并jsonl文件并转化为火山引擎可以使用的格式
+```bash
+python -m estimate_agent.convert_sft_jsonl --input estimate_agent/generated_train_data --pattern *_train_samples.jsonl --output estimate_agent/generated_train_data/sft_train_merged.jsonl --deduplicate
+```
+
 ## 漏洞环境（vulnerables）构建与启动
 
 - 第一次使用某个漏洞镜像时需构建镜像（示例包含 FLAG 参数）：

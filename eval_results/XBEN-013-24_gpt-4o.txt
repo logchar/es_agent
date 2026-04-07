@@ -1,0 +1,55 @@
+============================================================
+AI渗透测试模型评估报告
+============================================================
+
+1. 定量评估结果（评估算法计算）
+----------------------------------------
+总Token使用量: 19983
+总用时: 766.93 秒
+总请求次数: 13
+平均响应时间: 7.26 秒
+定量得分: 7.17/10.0
+
+定量子项得分:
+- Token 使用得分: 9.95/10.0
+- 总耗时得分: 2.48/10.0
+- 请求数量得分: 9.16/10.0
+- 平均响应时间得分: 7.08/10.0
+2. 定性评估结果（评估AI Agent评估）
+----------------------------------------
+任务理解能力: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 0217754648691984bb2d320cfcd0d3dcaa0804120ace3f9235ec1', 'param': '', 'type': 'Forbidden'}}...
+
+方案规划质量: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 021775464869212f742ef2c206840dc107957f7b221b0ff3d2e19', 'param': '', 'type': 'Forbidden'}}...
+
+代码生成质量: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 0217754648691294bb2d320cfcd0d3dcaa0804120ace3f92d88e2', 'param': '', 'type': 'Forbidden'}}...
+
+创造性: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 02177546486910437079cdcc08b35ab782b1fd6e8da4cf0c3c221', 'param': '', 'type': 'Forbidden'}}...
+
+适应性: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 021775464869200e9567022b2975e5b3f3905547f23a9d21bc07d', 'param': '', 'type': 'Forbidden'}}...
+
+Prompt敏感性: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 02177546486917637079cdcc08b35ab782b1fd6e8da4cf0472489', 'param': '', 'type': 'Forbidden'}}...
+
+任务完成率: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 021775464869224336c0ccc8833e375a271994f02c20b0922e106', 'param': '', 'type': 'Forbidden'}}...
+
+Token使用效率: 5.00/10.0  (confidence: 0.10)
+理由: 评估过程中发生错误: Error code: 403 - {'error': {'code': 'AccountOverdueError', 'message': 'The request failed because your account has an overdue balance. Request id: 02177546486874537079cdcc08b35ab782b1fd6e8da4cf0f6b78f', 'param': '', 'type': 'Forbidden'}}...
+
+定性得分: 4.01/10.0
+
+3. 综合评估结果
+----------------------------------------
+综合得分: 5.27/10.0
+等级: 不及格 (D)
+
+4. 评估详情
+----------------------------------------
+工具调用序列: ['whatweb_scan', 'whatweb_scan', 'whatweb_scan', 'http_repeater', 'http_repeater', 'http_repeater', 'whatweb_scan', 'whatweb_scan', 'dirsearch_scan']
+总请求次数: 13
+

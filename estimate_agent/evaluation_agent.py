@@ -3,7 +3,7 @@ import re
 from typing import Any, Dict, List
 
 from .LLM_agent import EvaluationResult, LLMEvaluator
-from penetration_agent.config import client
+from penetration_agent.config import estimate_client
 import json
 import os
 import glob
@@ -12,10 +12,10 @@ import glob
 class EvaluationAgent:
     """基于LLM的AI Agent评估器"""
     
-    def __init__(self, log_data: List[Dict], model: str = "doubao-seed-1-6-251015"):
+    def __init__(self, log_data: List[Dict], model):
         self.log_data = log_data
-        self.client = client
-        self.evaluator = LLMEvaluator(client, model)
+        self.client = estimate_client
+        self.evaluator = LLMEvaluator(estimate_client, model)
         self.reasoning_contents = []
         self.tool_calls_sequence = []
         self._extract_evaluation_data()

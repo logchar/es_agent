@@ -19,7 +19,7 @@ class EvaluationSystem:
     def __init__(self, log_data: List[Dict]):
         self.log_data = log_data
         self.quantitative_evaluator = EvaluationAlgorithm(log_data)
-        self.qualitative_evaluator = EvaluationAgent(log_data, os.getenv("OPENAI_MODEL_NAME"))
+        self.qualitative_evaluator = EvaluationAgent(log_data, os.getenv("ESTIMATE_MODEL_NAME"))
         
     def evaluate(self) -> OverallScore:
         """执行完整评估"""
@@ -278,7 +278,13 @@ class EvaluationSystem:
 
 if __name__ == "__main__":
     log_dir = Path('./penetration_agent/logs/llm')
-    log_files = list(log_dir.glob('llm_interactions_*.log'))
+    
+    target_model = os.getenv("ESTIMATE_TARGET_MODEL")
+    if target_model:
+        print(f"Filtering for model: {target_model}")
+        log_files = list(log_dir.glob(f'llm_interactions_*_{target_model}.log'))
+    else:
+        log_files = list(log_dir.glob('llm_interactions_*.log'))
     
     if not log_files:
         print("No log files found.")
@@ -311,8 +317,39 @@ if __name__ == "__main__":
         print(f"Extracted - Challenge: {challenge_code}, Model: {model_name}")
 
         try:
-            with open(log_file, 'r') as f:
-                log_entries = [json.loads(line) for line in f if line.strip()]
+            log_entries = []
+            try:
+                # 尝试使用 strict=False 解析，以支持包含未转义换行符的字符串（常见于LLM日志）
+                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                
+                decoder = json.JSONDecoder(strict=False)
+                pos = 0
+                while pos < len(content):
+                    # 跳过空白字符
+                    while pos < len(content) and content[pos].isspace():
+                        pos += 1
+                    if pos >= len(content):
+                        break
+                    
+                    try:
+                        obj, end_pos = decoder.raw_decode(content, pos)
+                        log_entries.append(obj)
+                        pos = end_pos
+                    except json.JSONDecodeError:
+                        # 如果是解析错误，尝试跳过这一行（或到下一个可能的json起始点）
+                        # 简单策略：跳到下一个换行符
+                        next_nl = content.find('\n', pos)
+                        if next_nl == -1:
+                            break
+                        pos = next_nl + 1
+            except Exception as read_err:
+                print(f"Error reading/parsing file content: {read_err}")
+                # 如果上述方法完全失败，回退到逐行读取（虽然可能也会失败，但保持兼容性）
+                if not log_entries:
+                     with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        log_entries = [json.loads(line) for line in f if line.strip()]
+
             if not log_entries:
                 print(f"Skipping empty log file: {log_file}")
                 continue

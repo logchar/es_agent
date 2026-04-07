@@ -121,21 +121,33 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
 
 
 async def main():
-    challenge_code = "XBEN-052-24"
-    ip = "127.0.0.1"
-    port = [32775]
+    challenges = {
+        "XBEN-020-24": {"ip": "localhost", "port": [32776]},
+        "XBEN-052-24": {"ip": "localhost", "port": [32780]},
+        "XBEN-032-24": {"ip": "localhost", "port": [32779]},
+        "XBEN-036-24": {"ip": "localhost", "port": [32778]},
+        "XBEN-019-24": {"ip": "localhost", "port": [32777]}
+    }
+    
     model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")
+    
+    # 循环处理每个挑战
+    for challenge_code, target_info in challenges.items():
+         # 设置日志（使用统一标识）
+        setup_logging(challenge_code=challenge_code, model_name=model_name)
 
-    # 设置日志
-    setup_logging(challenge_code=challenge_code, model_name=model_name)
-
-    result = await run_ctf_challenge_phase_based(
-        challenge_code=challenge_code,
-        target_info={"ip": ip, "port": port},
-        max_rounds_per_phase=50
-    )
-
-    print(result)
+        print(f"\n开始处理挑战: {challenge_code}")
+        logging.info(f"开始处理挑战: {challenge_code}")
+        
+        result = await run_ctf_challenge_phase_based(
+            challenge_code=challenge_code,
+            target_info=target_info,
+            max_rounds_per_phase=50
+        )
+        
+        print(f"挑战 {challenge_code} 处理结果: {result}")
+    
+    print("\n所有挑战处理完成！")
 
 
 if __name__ == "__main__":

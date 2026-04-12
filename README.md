@@ -22,6 +22,8 @@ sudo apt update && sudo apt install whatweb
 ```bash
 conda activate es_agent
 python -m estimate_agent.build_training_data
+
+python -m estimate_agent.build_training_data --challenge-id=XBEN-002-24 --output-dir estimate_agent/generated_train_data_test --env-root vulnerables/benchmark_envs
 ```
 运行完之后使用下面的命令，合并jsonl文件并转化为火山引擎可以使用的格式
 ```bash

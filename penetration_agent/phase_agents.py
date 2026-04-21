@@ -298,6 +298,21 @@ class SingleAgent:
 
         return None
 
+    def _compose_user_instruction(self, base_instruction: str, generated_instruction: str, rounds_completed: int) -> str:
+        """将评估模型输出作为补充策略注入，不覆盖原始任务指令。"""
+        base = (base_instruction or "").strip()
+        generated = (generated_instruction or "").strip()
+
+        if not generated:
+            return base
+
+        return (
+            f"{base}\n\n"
+            f"[评估模型补充策略 | 轮次 {rounds_completed + 1}]\n"
+            f"{generated}\n\n"
+            "执行要求：优先遵循补充策略，但不得违背原始任务目标与授权边界。"
+        )
+
     async def _run_execution_loop(self, system_prompt: str, instruction: str, challenge_code: str, max_rounds: int, phase_tools: List):
         """运行执行循环"""
         # 转换工具格式：从 MCP 格式转换为 OpenAI 格式
@@ -319,9 +334,10 @@ class SingleAgent:
                 transformed_tools.append(tool)
 
         # 准备消息列表
+        base_user_instruction = (instruction or "").strip()
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": instruction}
+            {"role": "user", "content": base_user_instruction}
         ]
 
         # 记录开始
@@ -332,18 +348,32 @@ class SingleAgent:
         # 简化版本：不做消息总结，直接使用固定窗口
         while True:
             model_name = os.getenv("OPENAI_MODEL_NAME")
+            # 每轮先恢复基础指令，避免补充策略无限累积
+            messages[1]["content"] = base_user_instruction
 
-            # 从第二轮开始，由评估模型根据渗透日志生成下一轮指令
-            if rounds_completed >= 1:
+            # 可选：从第二轮开始，由评估模型根据渗透日志生成下一轮指令（默认关闭）
+            # 用户若需要开启：export ENABLE_ESTIMATE_GUIDANCE=1
+            enable_estimate_guidance = os.getenv("ENABLE_ESTIMATE_GUIDANCE", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+            if enable_estimate_guidance and rounds_completed >= 1:
                 generated_instruction = await self._generate_instruction_from_logs(
                     challenge_code=challenge_code,
                     base_instruction=instruction,
                     penetration_model_name=model_name,
-                    rounds_completed=rounds_completed
+                    rounds_completed=rounds_completed,
                 )
                 if generated_instruction:
-                    messages[1]["content"] = generated_instruction
-                    logger.info(f"[单Agent] 第{rounds_completed + 1}轮使用评估模型生成的Instruction")
+                    messages[1]["content"] = self._compose_user_instruction(
+                        base_instruction=base_user_instruction,
+                        generated_instruction=generated_instruction,
+                        rounds_completed=rounds_completed,
+                    )
+                    logger.info(f"[单Agent] 第{rounds_completed + 1}轮注入评估模型补充策略")
 
             # 记录LLM请求
             log_llm_request(messages, model_name, 0, max_rounds, challenge_code)

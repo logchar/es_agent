@@ -5,10 +5,17 @@ from typing import Dict, Any
 @dataclass
 class QuantitativeMetrics:
     """定量评估指标（由评估算法计算）"""
+    # 渗透模型（被评估模型）侧的资源消耗
     total_tokens: int = 0
     total_time_seconds: float = 0.0
     total_requests: int = 0
     avg_response_time: float = 0.0
+
+    # 评估模型（Judge/critic）侧的资源消耗
+    eval_total_tokens: int = 0
+    eval_total_time_seconds: float = 0.0
+    eval_total_requests: int = 0
+    eval_avg_response_time: float = 0.0
     
 @dataclass
 class QualitativeMetrics:

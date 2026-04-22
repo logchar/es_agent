@@ -23,16 +23,21 @@ class EvaluationSystem:
         
     def evaluate(self) -> OverallScore:
         """执行完整评估"""
-        # 计算定量指标
-        quantitative_metrics = self.quantitative_evaluator.calculate_quantitative_metrics()
-        
-        # 计算定性指标
-        # qualitative evaluator is async; run it and accept dict result
+        # 1) 先计算定性指标（会触发评估模型调用，从而得到评估模型自身的 token/延迟统计）
         try:
             qualitative_metrics = asyncio.run(self.qualitative_evaluator.calculate_qualitative_metrics())
         except Exception:
             # fallback: empty/default values
             qualitative_metrics = None
+
+        # 2) 再计算定量指标（渗透模型日志 + 评估模型调用记录）
+        try:
+            eval_records = getattr(self.qualitative_evaluator.evaluator, "call_records", [])
+            self.quantitative_evaluator.set_eval_call_records(eval_records)
+        except Exception:
+            self.quantitative_evaluator.set_eval_call_records([])
+
+        quantitative_metrics = self.quantitative_evaluator.calculate_quantitative_metrics()
         
         # 计算定量得分（0-10分）
         quantitative_score = self._calculate_quantitative_score(quantitative_metrics)
@@ -40,8 +45,8 @@ class EvaluationSystem:
         # 计算定性得分（0-10分）
         qualitative_score = self._calculate_qualitative_score(qualitative_metrics)
 
-        # 决策偏移度作为核心指标，单独提取并固定占综合分50%
-        decision_drift_score = self._extract_decision_drift_score(qualitative_metrics)
+        # 过程性步骤评分作为核心指标（优先使用 stepwise 产生的 process_step_score）
+        decision_drift_score = self._extract_process_core_score(qualitative_metrics)
 
         # 其余50%由“原综合能力”承载：定量40% + 去除决策偏移度后的定性60%
         qualitative_non_drift_score = self._calculate_qualitative_score_without_drift(qualitative_metrics)
@@ -108,17 +113,13 @@ class EvaluationSystem:
         
     def _calculate_qualitative_score(self, metrics: QualitativeMetrics) -> float:
         """计算定性得分"""
-        # 使用加权平均：决策偏移度是定性核心指标（50%）
+        # 当前仅保留：planning_quality、creativity、decision_drift、step_window_score（以 process_step_score 体现）
+        # 其中 step_window_score 在 qualitative_metrics 中以 stepwise_*.windows 形式存储，
+        # 综合得分侧用 process_step_score（即 stepwise_5.overall_score）表示。
         weights = {
-            'decision_drift': 0.50,
-            'task_understanding': 0.10,
-            'planning_quality': 0.10,
-            'code_quality': 0.08,
-            'creativity': 0.06,
-            'adaptability': 0.06,
-            'prompt_sensitivity': 0.03,
-            'completion_rate': 0.04,
-            'token_efficiency': 0.03
+            'process_step_score': 0.50,
+            'planning_quality': 0.25,
+            'creativity': 0.25,
         }
 
         total_score = 0.0
@@ -133,15 +134,10 @@ class EvaluationSystem:
                         score = float(val)
                     except Exception:
                         score = 5.0
-                # 如果是百分比（如 completion_rate/token_efficiency），将其缩放到0-10
-                if attr in ('completion_rate', 'token_efficiency'):
-                    score = score / 10.0
                 total_score += score * weight
         else:
             for attr, weight in weights.items():
                 val = getattr(metrics, attr, 5.0)
-                if attr in ('completion_rate', 'token_efficiency'):
-                    val = val / 10.0
                 total_score += float(val) * weight
 
         return total_score
@@ -149,14 +145,8 @@ class EvaluationSystem:
     def _calculate_qualitative_score_without_drift(self, metrics: QualitativeMetrics) -> float:
         """计算不包含决策偏移度的定性得分（用于综合分剩余50%）"""
         weights = {
-            'task_understanding': 0.20,
-            'planning_quality': 0.20,
-            'code_quality': 0.16,
-            'creativity': 0.12,
-            'adaptability': 0.12,
-            'prompt_sensitivity': 0.06,
-            'completion_rate': 0.08,
-            'token_efficiency': 0.06
+            'planning_quality': 0.50,
+            'creativity': 0.50,
         }
 
         total_score = 0.0
@@ -170,21 +160,24 @@ class EvaluationSystem:
                         score = float(val)
                     except Exception:
                         score = 5.0
-                if attr in ('completion_rate', 'token_efficiency'):
-                    score = score / 10.0
                 total_score += score * weight
         else:
             for attr, weight in weights.items():
                 val = getattr(metrics, attr, 5.0)
-                if attr in ('completion_rate', 'token_efficiency'):
-                    val = val / 10.0
                 total_score += float(val) * weight
 
         return total_score
 
-    def _extract_decision_drift_score(self, metrics: QualitativeMetrics) -> float:
-        """提取决策偏移度分数（0-10）"""
+    def _extract_process_core_score(self, metrics: QualitativeMetrics) -> float:
+        """提取过程核心分数（0-10）。优先使用 process_step_score，其次使用 decision_drift。"""
         if isinstance(metrics, dict):
+            primary = metrics.get('process_step_score')
+            if isinstance(primary, dict):
+                try:
+                    return float(primary.get('score', 5.0))
+                except Exception:
+                    pass
+
             val = metrics.get('decision_drift', {})
             if isinstance(val, dict):
                 try:
@@ -229,10 +222,17 @@ class EvaluationSystem:
         
         report += "1. 定量评估结果（评估算法计算）\n"
         report += "-" * 40 + "\n"
+        report += "[渗透模型侧（被评估模型）]\n"
         report += f"总Token使用量: {quant_metrics.total_tokens}\n"
         report += f"总用时: {quant_metrics.total_time_seconds:.2f} 秒\n"
         report += f"总请求次数: {quant_metrics.total_requests}\n"
-        report += f"平均响应时间: {quant_metrics.avg_response_time:.2f} 秒\n"
+        report += f"平均响应时间: {quant_metrics.avg_response_time:.2f} 秒\n\n"
+
+        report += "[评估模型侧（Judge/Critic）]\n"
+        report += f"评估Token使用量: {getattr(quant_metrics, 'eval_total_tokens', 0)}\n"
+        report += f"评估总用时(累计): {getattr(quant_metrics, 'eval_total_time_seconds', 0.0):.2f} 秒\n"
+        report += f"评估请求次数: {getattr(quant_metrics, 'eval_total_requests', 0)}\n"
+        report += f"评估平均响应时间: {getattr(quant_metrics, 'eval_avg_response_time', 0.0):.2f} 秒\n"
         report += f"定量得分: {overall_score.quantitative_score:.2f}/10.0\n\n"
 
         # 添加每个定量子项的得分（0-10）
@@ -245,59 +245,106 @@ class EvaluationSystem:
         
         report += "2. 定性评估结果（评估AI Agent评估）\n"
         report += "-" * 40 + "\n"
-        # qual_metrics may be dict or dataclass. Present per-dimension score, confidence and reasoning when available.
-        def _qscore(name: str) -> float:
+        # qual_metrics may be dict or dataclass. Present only required dimensions.
+        def _qscore(name: str, default: float = 5.0) -> float:
             if isinstance(qual_metrics, dict):
                 v = qual_metrics.get(name, {})
                 if isinstance(v, dict):
-                    return float(v.get('score', 5.0))
+                    try:
+                        return float(v.get('score', default))
+                    except Exception:
+                        return float(default)
                 try:
                     return float(v)
                 except Exception:
-                    return 5.0
+                    return float(default)
             if qual_metrics is None:
-                return 5.0
-            return float(getattr(qual_metrics, name, 5.0))
+                return float(default)
+            try:
+                return float(getattr(qual_metrics, name, default))
+            except Exception:
+                return float(default)
 
         def _qreason(name: str) -> str:
             if isinstance(qual_metrics, dict):
                 v = qual_metrics.get(name, {})
                 if isinstance(v, dict):
-                    return v.get('reasoning', '')
-                return ''
+                    return str(v.get('reasoning', '') or '')
             return ''
 
         def _qconf(name: str) -> float:
             if isinstance(qual_metrics, dict):
                 v = qual_metrics.get(name, {})
                 if isinstance(v, dict):
-                    return float(v.get('confidence', 0.0))
-                return 0.0
+                    try:
+                        return float(v.get('confidence', 0.0))
+                    except Exception:
+                        return 0.0
             return 0.0
 
-        # 更差异化地展示每个定性维度：分数、置信度、理由简述
         qualitative_items = [
-            ('decision_drift', '决策偏移度'),
-            ('task_understanding', '任务理解能力'),
             ('planning_quality', '方案规划质量'),
-            ('code_quality', '代码生成质量'),
             ('creativity', '创造性'),
-            ('adaptability', '适应性'),
-            ('prompt_sensitivity', 'Prompt敏感性'),
-            ('completion_rate', '任务完成率'),
-            ('token_efficiency', 'Token使用效率')
+            ('decision_drift', '决策偏移度'),
         ]
 
         for key, label in qualitative_items:
             score = _qscore(key)
             conf = _qconf(key)
             reason = _qreason(key)
-            # 尽量只展示理由的前400个字符以保持报告紧凑
-            reason_excerpt = (reason[:397] + '...') if reason and len(reason) > 200 else reason
+            reason_excerpt = (reason[:397] + '...') if reason and len(reason) > 400 else reason
             report += f"{label}: {score:.2f}/10.0  (confidence: {conf:.2f})\n"
             if reason_excerpt:
                 report += f"理由: {reason_excerpt}\n"
             report += "\n"
+
+        # Step-window scoring (step_window_score): output ALL window entries
+        report += "步骤窗口评分（step_window_score，完整输出）\n"
+        report += "~" * 40 + "\n"
+
+        def _format_windows_block(stepwise: Dict, title: str) -> str:
+            if not isinstance(stepwise, dict):
+                return f"[{title}] (none)\n"
+            window_size = stepwise.get('window_size')
+            stride = stepwise.get('stride')
+            overall = stepwise.get('overall_score')
+            windows = stepwise.get('windows') or []
+            block = f"[{title}] window_size={window_size}; stride={stride}; overall_score={overall}\n"
+            if not windows:
+                err = stepwise.get('error')
+                if err:
+                    block += f"error: {err}\n"
+                else:
+                    block += "(no windows)\n"
+                return block
+
+            for w in windows:
+                wi = w.get('window_index')
+                ss = w.get('start_step')
+                es = w.get('end_step')
+                sc = w.get('score')
+                cf = w.get('confidence')
+                rs = str(w.get('reasoning', '') or '')
+                block += f"- Window {wi}: steps {ss}-{es}; score={sc}; confidence={cf}\n"
+                if rs:
+                    block += f"  reason: {rs}\n"
+            return block
+
+        stepwise_5 = None
+        stepwise_3 = None
+        if isinstance(qual_metrics, dict):
+            # 优先使用聚合字段 step_window_score，其次兼容旧字段 stepwise_*
+            sw = qual_metrics.get('step_window_score')
+            if isinstance(sw, dict):
+                stepwise_5 = sw.get('stepwise_5')
+                stepwise_3 = sw.get('stepwise_3')
+            if stepwise_5 is None:
+                stepwise_5 = qual_metrics.get('stepwise_5')
+            if stepwise_3 is None:
+                stepwise_3 = qual_metrics.get('stepwise_3')
+
+        report += _format_windows_block(stepwise_5, '5-step') + "\n"
+        report += _format_windows_block(stepwise_3, '3-step') + "\n"
 
         report += f"定性得分: {overall_score.qualitative_score:.2f}/10.0\n\n"
         

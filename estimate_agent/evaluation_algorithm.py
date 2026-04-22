@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 import statistics
 from collections import defaultdict
 from .data_class import QuantitativeMetrics
@@ -16,6 +16,9 @@ class EvaluationAlgorithm:
         self.total_tokens = 0
         self.tool_calls = []
         self.phase_activities = defaultdict(list)
+
+        # 评估模型（judge/critic）自身的调用开销（可选，由 EvaluationAgent/LLMEvaluator 提供）
+        self.eval_call_records: List[Dict[str, Any]] = []
         
     def parse_logs(self):
         """解析日志数据，提取关键信息"""
@@ -32,14 +35,25 @@ class EvaluationAlgorithm:
             except:
                 dt = None
                 
-            # 提取token相关信息
-            if "llm_request" in event_type:
-                messages_count = entry.get("messages_count", 0)
-                # 估算token数：每条消息约100-200 tokens
-                estimated_tokens = messages_count * 150
-                self.total_tokens += estimated_tokens
+            # 提取 token 相关信息（渗透模型侧）
+            if event_type == "llm_request" or "llm_request" in event_type:
+                messages_count = int(entry.get("messages_count", 0) or 0)
+                preview = entry.get("messages_preview") or []
+                # messages_preview 仅记录了前3条消息的长度；以其均值外推总长度
+                try:
+                    lengths = [int(m.get("content_length", 0) or 0) for m in preview if isinstance(m, dict)]
+                except Exception:
+                    lengths = []
+                if lengths:
+                    avg_len = statistics.mean(lengths)
+                    total_chars = int(sum(lengths) + max(0, messages_count - len(lengths)) * avg_len)
+                    estimated_tokens = max(1, total_chars // 4)
+                else:
+                    # fallback：无长度信息时按条数粗估
+                    estimated_tokens = max(1, messages_count * 150)
+                self.total_tokens += int(estimated_tokens)
                 
-            elif "llm_response" in event_type:
+            elif event_type == "llm_response" or "llm_response" in event_type:
                 tool_calls = entry.get("tool_calls_count", 0)
                 if tool_calls > 0:
                     tool_name = self._extract_tool_name(entry)
@@ -48,8 +62,8 @@ class EvaluationAlgorithm:
                 # 估算响应token数
                 response_preview = entry.get("response_preview", "")
                 reasoning = self._extract_reasoning(entry)
-                estimated_tokens = len(str(response_preview) + str(reasoning)) // 4
-                self.total_tokens += estimated_tokens
+                estimated_tokens = max(1, len(str(response_preview) + str(reasoning)) // 4)
+                self.total_tokens += int(estimated_tokens)
                 
             # 记录事件
             if dt:
@@ -139,7 +153,8 @@ class EvaluationAlgorithm:
     def calculate_quantitative_metrics(self) -> QuantitativeMetrics:
         """计算所有定量指标"""
         if not self.log_data:
-            return QuantitativeMetrics()
+            # 仍返回评估模型侧的统计（如果存在）
+            return self._build_metrics_from_current_state()
             
         self.parse_logs()
         
@@ -170,10 +185,49 @@ class EvaluationAlgorithm:
                 
         avg_response_time = statistics.mean(response_times) if response_times else 0.0
         
+
+        # 评估模型侧统计（来自 call_records）
+        eval_total_tokens = int(sum(int(r.get("total_tokens", 0) or 0) for r in self.eval_call_records))
+        eval_total_time_seconds = float(sum(float(r.get("latency_seconds", 0.0) or 0.0) for r in self.eval_call_records))
+        eval_total_requests = int(len(self.eval_call_records))
+        eval_avg_response_time = float(
+            statistics.mean([float(r.get("latency_seconds", 0.0) or 0.0) for r in self.eval_call_records])
+        ) if self.eval_call_records else 0.0
+
         return QuantitativeMetrics(
-            total_tokens=self.total_tokens,
-            total_time_seconds=total_time,
-            total_requests=len(self.log_data) // 2,  # 每对请求-响应算一次请求
-            avg_response_time=avg_response_time
+            # penetration / target model
+            total_tokens=int(self.total_tokens),
+            total_time_seconds=float(total_time),
+            total_requests=int(sum(1 for e in self.log_data if (e.get("event") == "llm_request" or "llm_request" in str(e.get("event", ""))))),
+            avg_response_time=float(avg_response_time),
+            # evaluator model
+            eval_total_tokens=eval_total_tokens,
+            eval_total_time_seconds=eval_total_time_seconds,
+            eval_total_requests=eval_total_requests,
+            eval_avg_response_time=eval_avg_response_time,
         )
+
+    def _build_metrics_from_current_state(self) -> QuantitativeMetrics:
+        """当 penetration log 为空时，仅基于 eval_call_records 构建指标。"""
+        eval_total_tokens = int(sum(int(r.get("total_tokens", 0) or 0) for r in self.eval_call_records))
+        eval_total_time_seconds = float(sum(float(r.get("latency_seconds", 0.0) or 0.0) for r in self.eval_call_records))
+        eval_total_requests = int(len(self.eval_call_records))
+        eval_avg_response_time = float(
+            statistics.mean([float(r.get("latency_seconds", 0.0) or 0.0) for r in self.eval_call_records])
+        ) if self.eval_call_records else 0.0
+
+        return QuantitativeMetrics(
+            total_tokens=0,
+            total_time_seconds=0.0,
+            total_requests=0,
+            avg_response_time=0.0,
+            eval_total_tokens=eval_total_tokens,
+            eval_total_time_seconds=eval_total_time_seconds,
+            eval_total_requests=eval_total_requests,
+            eval_avg_response_time=eval_avg_response_time,
+        )
+
+    def set_eval_call_records(self, records: Optional[List[Dict[str, Any]]]):
+        """注入评估模型的调用记录（由 EvaluationAgent/LLMEvaluator 产生）。"""
+        self.eval_call_records = list(records or [])
     

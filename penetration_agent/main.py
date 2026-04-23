@@ -122,11 +122,11 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
 
 async def main():
     challenges = {
-        "XBEN-020-24": {"ip": "localhost", "port": [32776]},
-        "XBEN-052-24": {"ip": "localhost", "port": [32780]},
-        "XBEN-032-24": {"ip": "localhost", "port": [32779]},
-        "XBEN-036-24": {"ip": "localhost", "port": [32778]},
-        "XBEN-019-24": {"ip": "localhost", "port": [32777]}
+        # "vulhub_01-rce_medium-web-1": {"ip": "222.20.126.52", "port": [32875]},
+        "XBEN-001-24": {"ip": "localhost", "port": [32768]},
+        # "XBEN-032-24": {"ip": "localhost", "port": [32779]},
+        # "XBEN-036-24": {"ip": "localhost", "port": [32778]},
+        # "XBEN-019-24": {"ip": "localhost", "port": [32777]}
     }
     
     model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")

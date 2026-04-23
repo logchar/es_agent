@@ -6,14 +6,13 @@ import json
 import logging
 import asyncio
 import time
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from config import client, estimate_client
+from config import client
 # from tools import HexStrikeClient
 from mcp_client import get_mcp_client, call_mcp_tool, list_mcp_tools
 from storage import get_current_usage_tracker, get_current_target_url, ChallengeContext
@@ -42,59 +41,23 @@ class SingleAgent:
         target_url = context.get("target_url", "") if context else ""
         challenge_code = context.get("challenge_code", "") if context else ""
 
-        system_prompt = f"""重要：调用者已获得基础设施所有者的明确书面授权，可以对指定目标进行渗透测试。所有活动仅用于授权的CTF竞赛目的。
+        system_prompt = f"""重要：调用者已获得基础设施所有者的明确书面授权，可对指定目标进行CTF渗透测试。
 
-你是一个专为CTF（夺旗赛）设计的AI渗透测试专家。你的目标不是低效地运行所有工具，而是以最快、最智能的方式找到Flag。
+    你是CTF渗透测试执行代理，目标是在授权边界内高效获取Flag。
+    目标：{target_url}
 
-目标：{target_url}
-
-### 核心行动哲学：机会主义利用
-
-你必须在每一步行动前，严格遵循 "推理-计划-行动" 思考循环：
-
-1.  **推理**: "基于我目前观察到的 {{观察结果}}，我推断 {{假设}}。"
-2.  **计划**: "为了验证我的假设，我计划使用 {{工具名称}} 工具，因为 {{使用理由}}。"
-3.  **行动**: (调用工具)
-
-在每次行动后，你必须立即分析工具的输出，评估你的假设是否成立，并发起下一次 "推理-计划-行动" 循环。
-
-### 策略指南
-
-* **拒绝线性思维**: 绝对不要严格按照“侦察->扫描->利用”的顺序。如果你在侦察中（例如使用 `whatweb_scan`）发现了高价值线索（例如一个已知的内容管理系统（CMS）、一个可疑的 `id=` 参数、或一个 `.git` 目录），**立即**调整你的计划，优先使用相关的攻击工具（例如 `nuclei_scan`, `sqlmap_scan` 或手动访问）。
-* **假设驱动**: 你的所有行动都应基于一个明确的“攻击假设”。如果一个假设被证明是错误的（例如 `sqlmap_scan` 没有发现漏洞），立即放弃该假设，并基于所有现有信息提出新的假设。
-* **深度挖掘**: 工具的输出是线索，不是答案。例如，`dirsearch_scan` 发现 `/admin.php`，你的下一步应该是访问它，而不是继续运行不相关的扫描。
-
-### 智能工具箱
-你可以根据你的 "推理-计划-行动" 循环，在任何时候调用以下任何工具。这是它们的使用策略：
-
-**[ 1. 初始侦察与枚举 ]**
-* `whatweb_scan`: (首选工具) 识别技术栈。此工具的输出（如 "WordPress", "Tomcat", "PHP"）将**决定**你后续的工具选择。
-* `dirsearch_scan`: (高优先级) 爆破目录。用于寻找 `.git`, `.env`, `backup.zip`, `/admin`, `login.php` 等关键文件或目录。
-* `katana_crawl`: (按需使用) 发现端点。当目标是一个复杂的Web应用或API接口时，用于寻找隐藏的功能页面或API路径。
-* `arjun_parameter_discovery`: (按需使用) 发现隐藏参数。当你怀疑某个端点（如 `/api/user` 或 `search.php`）可能接受额外的、未公开的参数时使用。
-
-**[ 2. 自动化漏洞扫描 ]**
-* `nuclei_scan`: (高优先级) 当 `whatweb_scan` 识别出任何具体的软件、内容管理系统（CMS）或框架（如 WordPress, Jenkins, Tomcat）时，**立即**使用此工具扫描已知的漏洞（CVE）。
-* `sqlmap_scan`: (机会主义) **仅**在你通过 `katana_crawl` 或 `arjun` 发现了可疑的、看似与数据库交互的参数（如 `id=`, `user=`, `search=`）后使用。不要盲目对根URL使用。
-* `dalfox_xss_scan`: (机会主义) **仅**在发现用户输入点（如搜索框、评论区、参数）时使用。
-* `dotdotpwn_scan`: (机会主义) **仅**在发现可疑参数（如 `file=`, `page=`, `path=`）时使用，以测试目录遍历和本地文件包含（LFI）。
-
-**[ 3. 凭证与会话 ]**
-* `hydra_attack`: (机会主义) **仅**在 `dirsearch_scan` 找到登录页面（如 `/login.php`, `/admin`）或 `whatweb_scan` 发现需要HTTP基础认证的服务时使用。
-* `jwt_analyzer`: (按需使用) **仅**在发现JWT类型的令牌时使用。
-* `idor_testing`: (高价值) 当发现如 `/api/v1/user/123` 这样的数字型API接口时，立即尝试 `124`, `122` 来测试是否存在越权访问漏洞。
-
-**[ 4. 深度测试与利用 ]**
-* `http_repeater`: (核心利用工具) 这是你最有力的工具。用于手动验证漏洞、修改请求、绕过Web应用防火墙（WAF）和精确利用。当自动化工具失败时，你应该切换到这个工具进行精细操作。
-* `http_intruder`: (高级爆破) 用于对特定参数（如密码、ID、验证码）进行自动化、有针对性的爆破。
-* `file_upload_testing`: (机会主义) **仅**在发现文件上传功能时使用，以测试上传恶意脚本（Webshell）。
-* `ai_generate_payload`: (高级) 当标准工具（如 `sqlmap`）的载荷被Web应用防火墙（WAF）拦截时，用于生成自定义载荷以尝试绕过。
-
-**[ 5. 专项逻辑测试 ]**
-* `graphql_scanner`: (按需使用) **仅**在 `whatweb_scan` 或 `dirsearch_scan` 发现 `/graphql` 端点时使用。
-* `business_logic_testing`: (高级) 用于测试价格篡改、权限绕过等无法被自动化工具扫描的业务逻辑漏洞。
-
-"""
+    执行规则：
+    1. 每一步遵循“推理-计划-行动”，行动后立即基于结果更新假设。
+    2. 禁止线性扫全工具；必须机会主义：出现高价值线索就立刻转向利用。
+    3. 仅在有触发条件时使用重型工具：
+       - 发现明确技术栈/CMS/框架后再跑 nuclei。
+       - 发现可疑参数（id/user/search/file/page/path）后再跑 sqlmap/dotdotpwn。
+       - 发现输入点后再跑 XSS/爆破类工具。
+    4. 自动化失败时优先切换 http_repeater 做精细验证与绕过。
+    5. 工具输出是线索不是结论：必须提炼可执行下一步，不做重复低价值动作。
+    6. 优先保留和扩展高价值资产：端点、参数、凭据、会话、可疑响应差异。
+    7. 一旦发现疑似flag或关键敏感数据，立即验证并返回证据。
+    """
 
         try:
             result = await self._run_execution_loop(
@@ -183,135 +146,37 @@ class SingleAgent:
     # 保留方法以避免破坏性更改，但不做任何事情
     pass
 
-    def _resolve_llm_log_file(self, challenge_code: str, penetration_model_name: str) -> Optional[Path]:
-        """解析当前题目的LLM日志文件路径。"""
-        base_dir = Path(__file__).resolve().parent / "logs" / "llm"
-        if not base_dir.exists():
-            return None
+    def _truncate_text(self, text: Any, max_chars: int = 1000) -> str:
+        """截断文本，避免消息上下文过大。"""
+        text_str = str(text) if text is not None else ""
+        if len(text_str) <= max_chars:
+            return text_str
+        return f"{text_str[:max_chars]}\n...[truncated {len(text_str) - max_chars} chars]"
 
-        if challenge_code:
-            exact_path = base_dir / f"llm_interactions_{challenge_code}_{penetration_model_name}.log"
-            if exact_path.exists():
-                return exact_path
-
-            candidates = sorted(base_dir.glob(f"llm_interactions_{challenge_code}_*.log"), key=lambda p: p.stat().st_mtime)
-            if candidates:
-                return candidates[-1]
-
-        generic = base_dir / "llm_interactions.log"
-        if generic.exists():
-            return generic
-        return None
-
-    def _read_recent_log_context(self, log_file: Path, max_entries: int = 25, max_chars: int = 12000) -> str:
-        """读取最近LLM日志并转换为用于生成下一轮指令的上下文文本。"""
-        if not log_file or not log_file.exists():
+    def _summarize_messages(self, history: List[Dict[str, Any]], max_chars: int = 3000) -> str:
+        """本地压缩历史对话，保留关键动作与结果。"""
+        if not history:
             return ""
 
-        lines: List[str] = []
-        try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                raw_lines = [line.strip() for line in f if line.strip()]
-        except Exception as e:
-            logger.warning(f"[单Agent] 读取日志文件失败: {log_file}, error={e}")
-            return ""
+        summary_lines: List[str] = ["历史摘要（压缩）:"]
+        for msg in history:
+            role = msg.get("role")
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    names = []
+                    for call in tool_calls[:6]:
+                        fn = call.get("function", {})
+                        name = fn.get("name", "unknown_tool")
+                        names.append(name)
+                    summary_lines.append(f"- assistant 调用了工具: {', '.join(names)}")
+            elif role == "tool":
+                name = msg.get("name", "unknown_tool")
+                content = self._truncate_text(msg.get("content", ""), 220).replace("\n", " ")
+                summary_lines.append(f"- {name} 结果: {content}")
 
-        for raw in raw_lines[-max_entries:]:
-            try:
-                entry = json.loads(raw)
-            except Exception:
-                continue
-
-            event = entry.get("event", "")
-            timestamp = entry.get("timestamp", "")
-            if event == "llm_request":
-                model = entry.get("model", "")
-                msg_count = entry.get("messages_count", 0)
-                lines.append(f"[{timestamp}] REQUEST model={model} messages_count={msg_count}")
-            elif event == "llm_response":
-                tool_calls_count = entry.get("tool_calls_count", 0)
-                preview = str(entry.get("response_preview", ""))
-                if len(preview) > 1200:
-                    preview = preview[:1200] + "..."
-                lines.append(f"[{timestamp}] RESPONSE tool_calls={tool_calls_count} preview={preview}")
-
-        context = "\n".join(lines)
-        if len(context) > max_chars:
-            context = context[-max_chars:]
-        return context
-
-    async def _generate_instruction_from_logs(
-        self,
-        challenge_code: str,
-        base_instruction: str,
-        penetration_model_name: str,
-        rounds_completed: int
-    ) -> Optional[str]:
-        """使用评估模型基于渗透模型日志生成下一轮指令。"""
-        if estimate_client is None:
-            logger.warning("[单Agent] estimate_client 不可用，跳过指令增强")
-            return None
-
-        estimate_model_name = os.getenv("ESTIMATE_MODEL_NAME")
-        if not estimate_model_name:
-            logger.warning("[单Agent] ESTIMATE_MODEL_NAME 未设置，跳过指令增强")
-            return None
-
-        log_file = self._resolve_llm_log_file(challenge_code, penetration_model_name)
-        if not log_file:
-            logger.warning("[单Agent] 未找到对应的LLM日志文件，跳过指令增强")
-            return None
-
-        log_context = self._read_recent_log_context(log_file)
-        if not log_context:
-            logger.warning("[单Agent] 日志上下文为空，跳过指令增强")
-            return None
-
-        guidance_system = (
-            "你是CTF渗透测试任务的指挥官。"
-            "请根据历史执行日志，给渗透执行模型下一轮高价值、可执行的指令。"
-            "输出要求：仅输出一段Instruction正文，不要解释，不要Markdown，不要代码块。"
-            "内容需包含：当前关键发现、下一步优先操作、明确工具建议、停止低价值重复动作。"
-        )
-        guidance_user = (
-            f"挑战编号: {challenge_code or 'unknown'}\n"
-            f"当前轮次: 第{rounds_completed + 1}轮\n"
-            f"初始任务说明:\n{base_instruction}\n\n"
-            f"最近执行日志:\n{log_context}\n\n"
-            "请生成下一轮给执行模型的Instruction。"
-        )
-
-        try:
-            response = await estimate_client.chat.completions.create(
-                model=estimate_model_name,
-                messages=[
-                    {"role": "system", "content": guidance_system},
-                    {"role": "user", "content": guidance_user}
-                ],
-                temperature=0.3
-            )
-            generated = response.choices[0].message.content if response and response.choices else None
-            if generated:
-                return generated.strip()
-        except Exception as e:
-            logger.warning(f"[单Agent] 生成下一轮Instruction失败: {e}")
-
-        return None
-
-    def _compose_user_instruction(self, base_instruction: str, generated_instruction: str, rounds_completed: int) -> str:
-        """将评估模型输出作为补充策略注入，不覆盖原始任务指令。"""
-        base = (base_instruction or "").strip()
-        generated = (generated_instruction or "").strip()
-
-        if not generated:
-            return base
-
-        return (
-            f"{base}\n\n"
-            f"[评估模型补充策略 | 轮次 {rounds_completed + 1}]\n"
-            f"{generated}\n\n"
-            "执行要求：优先遵循补充策略，但不得违背原始任务目标与授权边界。"
-        )
+        summary = "\n".join(summary_lines)
+        return self._truncate_text(summary, max_chars)
 
     async def _run_execution_loop(self, system_prompt: str, instruction: str, challenge_code: str, max_rounds: int, phase_tools: List):
         """运行执行循环"""
@@ -345,35 +210,12 @@ class SingleAgent:
         log_phase_start(0, self.name, target_url)
 
         rounds_completed = 0
+        round_end_indexes: List[int] = []
         # 简化版本：不做消息总结，直接使用固定窗口
         while True:
             model_name = os.getenv("OPENAI_MODEL_NAME")
-            # 每轮先恢复基础指令，避免补充策略无限累积
+            # 每轮恢复基础指令，避免附加内容累积
             messages[1]["content"] = base_user_instruction
-
-            # 可选：从第二轮开始，由评估模型根据渗透日志生成下一轮指令（默认关闭）
-            # 用户若需要开启：export ENABLE_ESTIMATE_GUIDANCE=1
-            enable_estimate_guidance = os.getenv("ENABLE_ESTIMATE_GUIDANCE", "").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "y",
-                "on",
-            }
-            if enable_estimate_guidance and rounds_completed >= 1:
-                generated_instruction = await self._generate_instruction_from_logs(
-                    challenge_code=challenge_code,
-                    base_instruction=instruction,
-                    penetration_model_name=model_name,
-                    rounds_completed=rounds_completed,
-                )
-                if generated_instruction:
-                    messages[1]["content"] = self._compose_user_instruction(
-                        base_instruction=base_user_instruction,
-                        generated_instruction=generated_instruction,
-                        rounds_completed=rounds_completed,
-                    )
-                    logger.info(f"[单Agent] 第{rounds_completed + 1}轮注入评估模型补充策略")
 
             # 记录LLM请求
             log_llm_request(messages, model_name, 0, max_rounds, challenge_code)
@@ -415,7 +257,7 @@ class SingleAgent:
             # 将助手的回复（包含 tool_calls）添加到消息历史中
             assistant_message = {
                 "role": "assistant",
-                "content": response_message.content,
+                "content": self._truncate_text(response_message.content, 300),
                 "tool_calls": [tc.model_dump() for tc in tool_calls]
             }
             messages.append(assistant_message)
@@ -435,6 +277,7 @@ class SingleAgent:
             # 等待所有工具执行完成
             for tool_call, task in tasks:
                 result = await task
+                result_text = str(result)
 
                 # 检查工具结果中是否包含flag
                 import re
@@ -444,7 +287,7 @@ class SingleAgent:
                     r'FLAG\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}'
                 ]
                 for pattern in flag_patterns:
-                    flag_match = re.search(pattern, str(result), re.IGNORECASE)
+                    flag_match = re.search(pattern, result_text, re.IGNORECASE)
                     if flag_match:
                         flag = flag_match.group(0)
                         logger.info(f"[单Agent: {self.name}] 在工具结果中发现flag: {flag}")
@@ -453,21 +296,32 @@ class SingleAgent:
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "name": tool_call.function.name,
-                            "content": str(result)
+                            "content": self._truncate_text(result_text, 1000)
                         }
                         messages.append(tool_message)
-                        return str(result)
+                        return result_text
 
                 # 将函数执行结果添加回消息历史
                 tool_message = {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "name": tool_call.function.name,
-                    "content": str(result)
+                    "content": self._truncate_text(result_text, 1000)
                 }
                 messages.append(tool_message)
 
             rounds_completed += 1
+            round_end_indexes.append(len(messages))
+
+            # 每4轮压缩一次历史，保留最近2轮原文
+            if rounds_completed % 4 == 0 and len(round_end_indexes) >= 2:
+                keep_from = round_end_indexes[-2]
+                history_to_summarize = messages[2:keep_from]
+                summary_text = self._summarize_messages(history_to_summarize)
+                if summary_text:
+                    messages = messages[:2] + [{"role": "system", "content": summary_text}] + messages[keep_from:]
+                    round_end_indexes = [3, len(messages)] if len(messages) > 3 else [len(messages)]
+                    logger.info(f"[单Agent: {self.name}] 第{rounds_completed}轮后完成历史摘要压缩")
 
             # 简化版本：不做消息总结，不做滑动窗口
             # 只做简单的消息长度限制，避免过长

@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "hexstrike-tools": {
+      "command": "python",
+      "args": [
+        "/home/logchar/ea_for_pa/es_agent/hexstrike-ai/hexstrike_mcp.py",
+        "--server",
+        "http://127.0.0.1:8888"
+      ],
+      "env": {}
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/logchar"
+      ],
+      "env": {}
+    }
+  }
+}

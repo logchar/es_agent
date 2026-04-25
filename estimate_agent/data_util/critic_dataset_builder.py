@@ -41,9 +41,9 @@ def build_critic_rows(
         "score_range": "0-10",
         "guide": [
             "9-10: key path complete with evidence loop",
-            "7-8.5: mostly correct, missing 1-2 key verification points",
-            "4-6.5: partially correct but major evidence gaps / skipped checks",
-            "0-3.5: off track / contradicts reference",
+            "8-9: mostly correct, missing 1-2 key verification points",
+            "5-8: partially correct but major evidence gaps / skipped checks",
+            "0-5: off track / contradicts reference / a little correct",
         ],
     }
 

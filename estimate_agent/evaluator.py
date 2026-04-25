@@ -12,6 +12,442 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+import re
+from datetime import timezone, timedelta
+from typing import Any, Iterable, Optional, Tuple
+
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(s: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", s or "")
+
+
+def _safe_jsonish_loads(s: str) -> Optional[Any]:
+    """Best-effort parse for JSON / Python-dict-ish fragments.
+
+    We avoid eval for safety. Only accept strict JSON; otherwise return None.
+    """
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    # common: single quotes dict from logs -> not JSON. Don't attempt to coerce.
+    if s[0] not in "{[":
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def _iter_lines(text: str) -> Iterable[str]:
+    for line in (text or "").splitlines():
+        yield _strip_ansi(line.rstrip("\n"))
+
+
+def _synthetic_ts(base: datetime, i: int) -> str:
+    # isoformat with Z
+    return (base + timedelta(seconds=i)).replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_text_log_langchain_style(text: str) -> List[Dict[str, Any]]:
+    """Parse logs like `estimate_agent/058.txt` into structured events.
+
+    Patterns supported:
+    - [步骤 N] ...  -> phase=N
+    - Invoking: `tool_name` with `{...}` -> tool_call (arguments best-effort json)
+    - tool output dict-ish line: {'exit_code':..., 'stdout':..., ...} -> tool_result (stored as raw string)
+    - responded: <assistant narrative> -> llm_response (response_preview=narrative)
+
+    Notes:
+    - Original logs may include ANSI escapes; stripped before parsing.
+    - Timestamps are synthetic monotonic to keep downstream metrics non-empty.
+    """
+    events: List[Dict[str, Any]] = []
+    base = datetime.now(timezone.utc)
+    phase = 0
+    last_tool: Optional[str] = None
+    last_args: Dict[str, Any] = {}
+    t = 0
+
+    step_re = re.compile(r"^\[步骤\s*(\d+)\]")
+    invoking_re = re.compile(r"Invoking:\s*`([^`]+)`\s*with\s*`(.*)`\s*$")
+    responded_re = re.compile(r"^responded:\s*(.*)\s*$")
+    # tool output lines are typically long python dict literal wrapped by ansi;
+    # we treat the whole line as result snippet.
+    tool_out_re = re.compile(r"^\{.*\}\s*$")
+
+    for line in _iter_lines(text):
+        if not line.strip():
+            continue
+
+        m = step_re.search(line)
+        if m:
+            try:
+                phase = int(m.group(1))
+            except Exception:
+                phase = phase
+            continue
+
+        m = invoking_re.search(line)
+        if m:
+            last_tool = m.group(1).strip()
+            raw_args = m.group(2).strip()
+            parsed = _safe_jsonish_loads(raw_args)
+            last_args = parsed if isinstance(parsed, dict) else {}
+            events.append(
+                {
+                    "event": "tool_call",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "tool_name": last_tool,
+                    "arguments": last_args,
+                }
+            )
+            t += 1
+            continue
+
+        m = responded_re.search(line)
+        if m:
+            narrative = m.group(1).strip()
+            # Create a paired request/response so quantitative metrics have "requests".
+            req_preview = narrative[:400]
+            events.append(
+                {
+                    "event": "llm_request",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "messages_count": 1,
+                    "messages_preview": [{"content_length": len(req_preview)}],
+                }
+            )
+            t += 1
+            events.append(
+                {
+                    "event": "llm_response",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "tool_calls_count": 1 if last_tool else 0,
+                    "tool_name": last_tool,
+                    "response_preview": narrative[:1200],
+                }
+            )
+            t += 1
+            continue
+
+        if last_tool and tool_out_re.match(line.strip()):
+            # Can't safely parse python dict (single quotes). Keep raw snippet.
+            events.append(
+                {
+                    "event": "tool_result",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "tool_name": last_tool,
+                    "status": None,
+                    "duration_ms": None,
+                    "result": line[:6000],
+                }
+            )
+            t += 1
+            continue
+
+    return events
+
+
+def parse_text_log_claude_code(text: str) -> List[Dict[str, Any]]:
+    """Parse logs like `estimate_agent/LLMhard.txt` into structured events.
+
+    Supported:
+    - Lines starting with '● ':
+      - '● Bash(cmd...)' / '● Fetch(url...)' / '● WebFetch(...)' treated as tool_call with argument "raw"
+      - otherwise treated as llm_response narrative
+    - Lines starting with '⎿' (tool output in Claude Code) attached as tool_result to the latest tool_call.
+    """
+    events: List[Dict[str, Any]] = []
+    base = datetime.now(timezone.utc)
+    phase = 0
+    last_tool: Optional[str] = None
+    t = 0
+
+    bullet_re = re.compile(r"^●\s+(.*)$")
+    tool_re = re.compile(r"^(Bash|Fetch|WebFetch)\((.*)\)\s*$")
+    out_re = re.compile(r"^\s*⎿\s*(.*)$")
+
+    buffered_out: List[str] = []
+
+    def flush_out():
+        nonlocal buffered_out, last_tool, t
+        if last_tool and buffered_out:
+            out_text = "\n".join(buffered_out).strip()
+            events.append(
+                {
+                    "event": "tool_result",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "tool_name": last_tool,
+                    "status": None,
+                    "duration_ms": None,
+                    "result": out_text[:8000],
+                }
+            )
+            t += 1
+        buffered_out = []
+
+    for line in _iter_lines(text):
+        if not line.strip():
+            continue
+
+        m = out_re.match(line)
+        if m:
+            buffered_out.append(m.group(1))
+            continue
+
+        m = bullet_re.match(line)
+        if not m:
+            # Non-bulleted content: if we're collecting output, keep it.
+            if buffered_out:
+                buffered_out.append(line)
+            continue
+
+        # New bullet: flush any pending tool output first.
+        flush_out()
+
+        content = (m.group(1) or "").strip()
+        mt = tool_re.match(content)
+        if mt:
+            last_tool = mt.group(1)
+            raw = mt.group(2).strip()
+            events.append(
+                {
+                    "event": "tool_call",
+                    "timestamp": _synthetic_ts(base, t),
+                    "phase": phase,
+                    "tool_name": last_tool,
+                    "arguments": {"raw": raw},
+                }
+            )
+            t += 1
+            continue
+
+        # Otherwise treat as assistant narrative (request+response pair for quantitative).
+        preview = content[:400]
+        events.append(
+            {
+                "event": "llm_request",
+                "timestamp": _synthetic_ts(base, t),
+                "phase": phase,
+                "messages_count": 1,
+                "messages_preview": [{"content_length": len(preview)}],
+            }
+        )
+        t += 1
+        events.append(
+            {
+                "event": "llm_response",
+                "timestamp": _synthetic_ts(base, t),
+                "phase": phase,
+                "tool_calls_count": 0,
+                "response_preview": content[:1200],
+            }
+        )
+        t += 1
+
+    flush_out()
+    return events
+
+
+def load_log_entries_any_format(path: Path) -> List[Dict[str, Any]]:
+    """Load either JSONL-ish structured logs or the two text formats into the same event list."""
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    sniff = raw.lstrip()[:2000]
+
+    # Structured JSON logs (old format): evaluator.py used a JSONDecoder stream parse.
+    if sniff.startswith("{") or sniff.startswith("["):
+        log_entries: List[Dict[str, Any]] = []
+        decoder = json.JSONDecoder(strict=False)
+        pos = 0
+        while pos < len(raw):
+            while pos < len(raw) and raw[pos].isspace():
+                pos += 1
+            if pos >= len(raw):
+                break
+            try:
+                obj, end_pos = decoder.raw_decode(raw, pos)
+                if isinstance(obj, dict):
+                    log_entries.append(obj)
+                elif isinstance(obj, list):
+                    for it in obj:
+                        if isinstance(it, dict):
+                            log_entries.append(it)
+                pos = end_pos
+            except json.JSONDecodeError:
+                next_nl = raw.find("\n", pos)
+                if next_nl == -1:
+                    break
+                pos = next_nl + 1
+        if log_entries:
+            return log_entries
+
+    # New formats
+    if "Invoking:" in raw and "[步骤" in raw:
+        return parse_text_log_langchain_style(raw)
+    if "Claude Code" in raw and "● " in raw:
+        return parse_text_log_claude_code(raw)
+
+    # Fallback: treat as claude-code-like if it has bullets, else as langchain-ish.
+    if "● " in raw:
+        return parse_text_log_claude_code(raw)
+    return parse_text_log_langchain_style(raw)
+
+
+def dump_events_jsonl(events: List[Dict[str, Any]], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        for e in events or []:
+            try:
+                f.write(json.dumps(e, ensure_ascii=False, default=str) + "\n")
+            except Exception:
+                # best-effort: stringify on failure
+                f.write(json.dumps({"_unserializable_event": str(e)}, ensure_ascii=False) + "\n")
+
+
+def compact_events_for_eval(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Produce a smaller event list suitable for LLM evaluation + archiving.
+
+    - Keep structure needed by EvaluationAlgorithm/EvaluationAgent.
+    - Truncate large textual fields.
+    - Drop verbose tool outputs.
+    """
+    if not events:
+        return []
+
+    MAX_EVENTS = 8000
+    MAX_RESPONSE_PREVIEW = 600
+    MAX_TOOL_RESULT = 600
+    MAX_ARG_VAL = 200
+
+    out: List[Dict[str, Any]] = []
+    for e in events[:MAX_EVENTS]:
+        if not isinstance(e, dict):
+            continue
+        ev = e.get("event")
+
+        if ev == "llm_response":
+            ne = dict(e)
+            rp = ne.get("response_preview")
+            if rp is not None:
+                ne["response_preview"] = str(rp)[:MAX_RESPONSE_PREVIEW]
+            out.append(ne)
+            continue
+
+        if ev == "llm_request":
+            # keep only minimal fields for quantitative stats
+            out.append(
+                {
+                    "event": "llm_request",
+                    "timestamp": e.get("timestamp"),
+                    "phase": e.get("phase", 0),
+                    "messages_count": int(e.get("messages_count", 0) or 0),
+                    "messages_preview": e.get("messages_preview") or [],
+                }
+            )
+            continue
+
+        if ev == "tool_call":
+            ne = dict(e)
+            args = ne.get("arguments")
+            if isinstance(args, dict):
+                args2 = {}
+                for k, v in args.items():
+                    args2[str(k)] = str(v)[:MAX_ARG_VAL]
+                ne["arguments"] = args2
+            else:
+                ne["arguments"] = {}
+            out.append(ne)
+            continue
+
+        if ev == "tool_result":
+            # tool outputs are the largest; keep a snippet only
+            out.append(
+                {
+                    "event": "tool_result",
+                    "timestamp": e.get("timestamp"),
+                    "phase": e.get("phase", 0),
+                    "tool_name": e.get("tool_name"),
+                    "status": e.get("status"),
+                    "duration_ms": e.get("duration_ms"),
+                    "result": (str(e.get("result"))[:MAX_TOOL_RESULT] if e.get("result") is not None else None),
+                }
+            )
+            continue
+
+        out.append(e)
+
+    return out
+
+
+def dump_events_compact_json(compact_events: List[Dict[str, Any]], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # No indent to keep file small
+    out_path.write_text(json.dumps(compact_events or [], ensure_ascii=False, separators=(",", ":"), default=str), encoding="utf-8")
+
+
+def build_compact_steps_trace(events: List[Dict[str, Any]], max_steps: int = 800) -> List[Dict[str, Any]]:
+    """Convert event stream into a much smaller steps-only trace for qualitative evaluation."""
+    steps: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
+
+    for e in events or []:
+        if not isinstance(e, dict):
+            continue
+        ev = e.get("event")
+        if ev == "tool_call":
+            st = {
+                "tool_name": e.get("tool_name") or "unknown",
+                "timestamp": e.get("timestamp"),
+                "phase": e.get("phase"),
+                "status": None,
+                "duration_ms": None,
+                "reasoning_snippet": "",
+                "result": None,
+            }
+            pending.append(st)
+            steps.append(st)
+            if len(steps) >= max_steps:
+                break
+        elif ev == "tool_result":
+            tool_name = e.get("tool_name") or "unknown"
+            matched = None
+            for i in range(len(pending) - 1, -1, -1):
+                if pending[i].get("tool_name") == tool_name:
+                    matched = pending.pop(i)
+                    break
+            if matched is None and pending:
+                matched = pending.pop()
+            if matched is not None:
+                matched["status"] = e.get("status")
+                matched["duration_ms"] = e.get("duration_ms")
+                r = e.get("result")
+                matched["result"] = (str(r)[:220] if r is not None else None)
+
+    return steps
+
+
+def extract_log_tail_text(path: Path, *, tail_lines: int = 200, max_chars: int = 12000) -> str:
+    """Keep the last N lines of the original raw log for preserving final findings/flags."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    lines = [_strip_ansi(ln) for ln in raw.splitlines()]
+    tail = "\n".join(lines[-tail_lines:]).strip()
+    if len(tail) > max_chars:
+        tail = tail[-max_chars:]
+    return tail
+
 
 class EvaluationSystem:
     """完整的评估系统"""
@@ -392,82 +828,99 @@ class EvaluationSystem:
             return "不及格 (D)"
 
 if __name__ == "__main__":
-    log_dir = Path('./penetration_agent/logs/llm')
-    
-    target_model = os.getenv("ESTIMATE_TARGET_MODEL")
-    if target_model:
-        print(f"Filtering for model: {target_model}")
-        log_files = list(log_dir.glob(f'llm_interactions_*_{target_model}.log'))
-    else:
-        log_files = list(log_dir.glob('llm_interactions_*.log'))
-    
-    if not log_files:
-        print("No log files found.")
-        exit(0)
-    print(f"Found {len(log_files)} log files to evaluate.")
+    # New behavior:
+    # - Prefer evaluating explicit text transcripts under estimate_agent/ (e.g. 058.txt, LLMhard.txt)
+    # - Still supports legacy structured logs under ./penetration_agent/logs/llm
+    import sys
 
-    for log_file in log_files:
-        print(f"\nProcessing {log_file.name}...")
-        
-        # Extract info from filename
-        # Filename format: llm_interactions_{challenge_code}_{model_name}.log
-        filename_stem = log_file.stem # llm_interactions_...
-        
-        # Remove prefix
-        if filename_stem.startswith('llm_interactions_'):
-            rest = filename_stem[len('llm_interactions_'):]
-            # Try to split into challenge_code and model_name
-            # Assuming challenge_code does not contain underscores
-            parts = rest.split('_', 1)
-            if len(parts) == 2:
-                challenge_code = parts[0]
-                model_name = parts[1]
+    argv = [a for a in sys.argv[1:] if a.strip()]
+
+    explicit_files: List[Path] = []
+    for a in argv:
+        p = Path(a)
+        if p.exists() and p.is_file():
+            explicit_files.append(p)
+
+    # If user passed paths, only evaluate those.
+    if explicit_files:
+        candidates = explicit_files
+    else:
+        # default: try estimate_agent/*.txt first (new formats), else fallback to old json logs.
+        estimate_dir = Path(__file__).resolve().parent
+        candidates = sorted(list(estimate_dir.glob("*.txt")))
+        if not candidates:
+            log_dir = Path("./penetration_agent/logs/llm")
+            target_model = os.getenv("ESTIMATE_TARGET_MODEL")
+            if target_model:
+                print(f"Filtering for model: {target_model}")
+                candidates = list(log_dir.glob(f"llm_interactions_*_{target_model}.log"))
             else:
-                # Fallback or handle cases where one might be missing
+                candidates = list(log_dir.glob("llm_interactions_*.log"))
+
+    if not candidates:
+        print("No log files found.")
+        raise SystemExit(0)
+
+    print(f"Found {len(candidates)} log files to evaluate.")
+
+    for log_file in candidates:
+        print(f"\nProcessing {log_file.name}...")
+
+        # Extract info from filename (best-effort)
+        challenge_code = "unknown_challenge"
+        model_name = "unknown_model"
+        filename_stem = log_file.stem
+        if filename_stem.startswith("llm_interactions_"):
+            rest = filename_stem[len("llm_interactions_") :]
+            parts = rest.split("_", 1)
+            if len(parts) == 2:
+                challenge_code, model_name = parts[0], parts[1]
+            elif parts:
                 challenge_code = parts[0]
-                model_name = "unknown_model"
         else:
-            challenge_code = "unknown_challenge"
-            model_name = "unknown_model"
+            # e.g. "058" or "LLMhard" etc.
+            m = re.search(r"(\d{3})", filename_stem)
+            if m:
+                challenge_code = m.group(1)
+
         print(f"Extracted - Challenge: {challenge_code}, Model: {model_name}")
 
         try:
-            log_entries = []
-            try:
-                # 尝试使用 strict=False 解析，以支持包含未转义换行符的字符串（常见于LLM日志）
-                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
-                
-                decoder = json.JSONDecoder(strict=False)
-                pos = 0
-                while pos < len(content):
-                    # 跳过空白字符
-                    while pos < len(content) and content[pos].isspace():
-                        pos += 1
-                    if pos >= len(content):
-                        break
-                    
-                    try:
-                        obj, end_pos = decoder.raw_decode(content, pos)
-                        log_entries.append(obj)
-                        pos = end_pos
-                    except json.JSONDecodeError:
-                        # 如果是解析错误，尝试跳过这一行（或到下一个可能的json起始点）
-                        # 简单策略：跳到下一个换行符
-                        next_nl = content.find('\n', pos)
-                        if next_nl == -1:
-                            break
-                        pos = next_nl + 1
-            except Exception as read_err:
-                print(f"Error reading/parsing file content: {read_err}")
-                # 如果上述方法完全失败，回退到逐行读取（虽然可能也会失败，但保持兼容性）
-                if not log_entries:
-                     with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                        log_entries = [json.loads(line) for line in f if line.strip()]
-
+            log_entries_full = load_log_entries_any_format(log_file)
+            log_entries = compact_events_for_eval(log_entries_full)
             if not log_entries:
-                print(f"Skipping empty log file: {log_file}")
+                print(f"Skipping empty/unparseable log file: {log_file}")
                 continue
+
+            # Dump normalized events for debugging / inspection
+            output_dir = Path("eval_results")
+            safe_model = re.sub(r"[^a-zA-Z0-9_.-]+", "_", model_name or "unknown_model")
+            safe_chal = re.sub(r"[^a-zA-Z0-9_.-]+", "_", challenge_code or "unknown_challenge")
+            events_path = output_dir / f"{safe_chal}_{safe_model}.events.jsonl"
+            dump_events_jsonl(log_entries, events_path)
+            print(f"Events dumped: {events_path}")
+
+            compact_path = output_dir / f"{safe_chal}_{safe_model}.compact.json"
+            dump_events_compact_json(log_entries, compact_path)
+            print(f"Compact events dumped: {compact_path}")
+
+            # Much smaller steps-only trace for qualitative evaluation
+            steps_trace = build_compact_steps_trace(log_entries, max_steps=800)
+            # Preserve tail text from original file (e.g., findings/flag/success summary)
+            tail_text = extract_log_tail_text(log_file, tail_lines=200, max_chars=12000)
+            if tail_text:
+                steps_trace.insert(
+                    0,
+                    {
+                        "tail_log": tail_text,
+                        "tail_lines": 200,
+                        "source_file": str(log_file),
+                    },
+                )
+            steps_path = output_dir / f"{safe_chal}_{safe_model}.compact_steps.json"
+            steps_path.write_text(json.dumps(steps_trace, ensure_ascii=False, separators=(",", ":"), default=str), encoding="utf-8")
+            print(f"Compact steps dumped: {steps_path}")
+
             evaluator = EvaluationSystem(log_entries)
             report_path = evaluator.generate_report(challenge_code=challenge_code, model_name=model_name)
             print(f"Report generated: {report_path}")

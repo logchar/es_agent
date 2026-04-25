@@ -7,6 +7,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -126,12 +127,23 @@ class LoggerManager:
         log_level = logging.DEBUG if debug_mode else logging.INFO
         logging.getLogger().setLevel(log_level)
 
-        # 构建文件名后缀
+        def _sanitize_path_component(value: str, max_len: int = 120) -> str:
+            """将任意字符串安全化为文件名组件，避免出现 '/', ':' 等导致路径错误的字符。"""
+            if not value:
+                return ""
+            # Replace any unsafe characters (including path separators) with '_'
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value))
+            safe = safe.strip("_ .-")
+            if len(safe) > max_len:
+                safe = safe[:max_len].rstrip("_ .-")
+            return safe
+
+        # 构建文件名后缀（确保不会改变目录结构）
         suffix = ""
         if challenge_code:
-            suffix += f"_{challenge_code}"
+            suffix += f"_{_sanitize_path_component(challenge_code)}"
         if model_name:
-            suffix += f"_{model_name}"
+            suffix += f"_{_sanitize_path_component(model_name)}"
 
         # 1. 创建通用应用日志记录器
         app_logger = logging.getLogger("app")
@@ -342,7 +354,7 @@ class LoggerManager:
             "phase": phase,
             "challenge_code": challenge_code,
             "tool_calls_count": tool_calls_count,
-            "response_preview": str(response)[:1000] if response else None
+            "response_preview": str(response)[:3000] if response else None
         }
         record = logger.makeRecord(
             logger.name, logging.INFO, "", 0,

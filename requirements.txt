@@ -24,6 +24,7 @@ cart==1.2.3
 certifi==2025.10.5
 cffi==2.0.0
 charset-normalizer==3.4.4
+claude-agent-sdk==0.0.23
 claripy==9.2.183
 cle==9.2.183
 click==8.3.1

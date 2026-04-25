@@ -3,7 +3,17 @@
 配置模块：管理客户端初始化、环境变量和基础配置
 """
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+from datetime import datetime
+import re
+
+# Prefer loading env from this package directory, so running from repo root
+# still picks up `penetration_agent/.env` reliably.
+_DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+if _DOTENV_PATH.exists():
+    load_dotenv(dotenv_path=_DOTENV_PATH)
+else:
+    load_dotenv()
 
 import os
 import logging
@@ -13,9 +23,34 @@ def setup_logging(challenge_code: str = "", model_name: str = ""):
     """设置日志配置 - 使用新的JSON结构化日志系统"""
     from logging_config import LoggerManager
 
+    def _sanitize_path_component(value: str, max_len: int = 120) -> str:
+        """将任意字符串安全化为文件名组件，避免出现 '/', ':' 等导致路径错误的字符。"""
+        if not value:
+            return ""
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value))
+        safe = safe.strip("_ .-")
+        if len(safe) > max_len:
+            safe = safe[:max_len].rstrip("_ .-")
+        return safe
+
+    # 固定日志目录到 penetration_agent/logs，避免从不同 cwd 运行时散落到别处
+    log_dir_path = Path(__file__).resolve().with_name("logs")
+    os.makedirs(log_dir_path, exist_ok=True)
+
+    # 为 Claude SDK 会话日志 / 导出摘要生成不覆盖的文件名（challenge + model + 时间戳）
+    if challenge_code:
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        cc = _sanitize_path_component(challenge_code)
+        mn = _sanitize_path_component(model_name) if model_name else ""
+        stem = "_".join([p for p in [cc, mn, ts] if p])
+
+        # 覆盖/设置环境变量：claude_code_runner.py 会读取它们来写文件（默认 'w' 模式）
+        os.environ["CLAUDE_SDK_SESSION_LOG_FILE"] = str(log_dir_path / f"{stem}_claude-session.jsonl")
+        os.environ["CLAUDE_CODE_EXPORT_FILE"] = str(log_dir_path / f"{stem}_conversation-export.txt")
+
     # 初始化JSON结构化日志系统
     # DEBUG模式启用详细日志记录
-    LoggerManager.initialize(log_dir="logs", debug_mode=True, challenge_code=challenge_code, model_name=model_name, reset=True)
+    LoggerManager.initialize(log_dir=str(log_dir_path), debug_mode=True, challenge_code=challenge_code, model_name=model_name, reset=True)
 
 
 def create_openai_client():
@@ -98,6 +133,8 @@ try:
     print("OpenAI客户端创建成功")
 except Exception as e:
     print(f"创建OpenAI客户端失败: {e}")
+    if "No module named 'openai'" in str(e) or "No module named" in str(e):
+        print("提示：请先在当前 Python 环境安装依赖，例如 `pip install -r requirements.txt`")
     print("CTF工具可能仍然可用，但AI功能将不可用")
     client = None
     estimate_client = None

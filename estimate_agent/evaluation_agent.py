@@ -15,7 +15,8 @@ class EvaluationAgent:
     """基于LLM的AI Agent评估器"""
     
     def __init__(self, log_data: List[Dict], model):
-        self.log_data = log_data
+        # Important: raw logs can be huge. Compact early to keep prompts within budget.
+        self.log_data = self._compact_log_data(log_data)
         self.client = estimate_client
         self.evaluator = LLMEvaluator(estimate_client, model)
         self.reasoning_contents = []
@@ -38,6 +39,71 @@ class EvaluationAgent:
             # 'token_efficiency': self._get_prompt_token_efficiency_prompt(),
         }
         
+    def _compact_log_data(self, log_data: List[Dict]) -> List[Dict]:
+        """Reduce log size while preserving evaluation signal.
+
+        Strategy:
+        - Drop low-signal events (e.g. llm_request) entirely for qualitative evaluation.
+        - Keep tool_call/tool_result/llm_response but aggressively truncate large fields.
+        - Cap total number of events so pathological transcripts don't explode memory.
+        """
+        if not log_data:
+            return []
+
+        # If caller already provides "steps-only" trace (no event field),
+        # keep as-is and let _extract_evaluation_data consume it directly.
+        if isinstance(log_data, list) and log_data and isinstance(log_data[0], dict) and "event" not in log_data[0] and "tool_name" in log_data[0]:
+            return log_data
+
+        MAX_EVENTS = 6000  # hard cap to avoid runaway memory
+        MAX_PREVIEW_CHARS = 1200
+        MAX_RESULT_CHARS = 2000
+
+        compact: List[Dict[str, Any]] = []
+        for e in log_data[:MAX_EVENTS]:
+            if not isinstance(e, dict):
+                continue
+            ev = e.get("event")
+            if ev == "llm_request":
+                continue
+
+            if ev == "llm_response":
+                ne = dict(e)
+                rp = ne.get("response_preview", "")
+                if rp is not None:
+                    ne["response_preview"] = str(rp)[:MAX_PREVIEW_CHARS]
+                compact.append(ne)
+                continue
+
+            if ev == "tool_result":
+                ne = dict(e)
+                r = ne.get("result")
+                if r is not None:
+                    ne["result"] = str(r)[:MAX_RESULT_CHARS]
+                compact.append(ne)
+                continue
+
+            if ev == "tool_call":
+                # arguments can be arbitrarily large (raw command/output); keep only a short string form
+                ne = dict(e)
+                args = ne.get("arguments")
+                if isinstance(args, dict):
+                    # per-key truncate
+                    args2 = {}
+                    for k, v in args.items():
+                        sv = str(v)
+                        args2[k] = sv[:400]
+                    ne["arguments"] = args2
+                else:
+                    ne["arguments"] = {}
+                compact.append(ne)
+                continue
+
+            # keep other structured events as-is (should be rare)
+            compact.append(e)
+
+        return compact
+
     def _extract_evaluation_data(self):
         """从结构化日志中提取评估所需的数据。
 
@@ -50,6 +116,40 @@ class EvaluationAgent:
         recent_reasoning = ""
         pending_calls: List[Dict[str, Any]] = []
 
+        # Caps: keep evaluation prompts bounded
+        MAX_REASONINGS = 60
+        MAX_STEPS = 260
+
+        # Steps-only fast path
+        if self.log_data and isinstance(self.log_data[0], dict) and "event" not in self.log_data[0]:
+            # Optional meta header carrying tail raw log text
+            idx0 = 0
+            if isinstance(self.log_data[0], dict) and "tail_log" in self.log_data[0]:
+                tail = str(self.log_data[0].get("tail_log") or "")
+                # Put tail text into reasoning block (hard-capped later) so planning/creativity can use it.
+                if tail:
+                    self.reasoning_contents.append(tail)
+                idx0 = 1
+
+            for st in self.log_data[idx0 : idx0 + MAX_STEPS]:
+                if not isinstance(st, dict):
+                    continue
+                tool_name = str(st.get("tool_name", "") or "").strip() or "unknown"
+                step = {
+                    "tool_name": tool_name,
+                    "arguments": st.get("arguments") if isinstance(st.get("arguments"), dict) else {},
+                    "timestamp": st.get("timestamp"),
+                    "phase": st.get("phase"),
+                    "reasoning_snippet": str(st.get("reasoning_snippet", "") or "")[:240].replace("\n", " "),
+                    "result": st.get("result"),
+                    "status": st.get("status"),
+                    "duration_ms": st.get("duration_ms"),
+                }
+                self.steps.append(step)
+                if tool_name != "unknown":
+                    self.tool_calls_sequence.append(tool_name)
+            return
+
         for entry in self.log_data:
             event = entry.get("event")
 
@@ -60,6 +160,8 @@ class EvaluationAgent:
                 if reasoning:
                     recent_reasoning = reasoning
                     self.reasoning_contents.append(reasoning)
+                    if len(self.reasoning_contents) > MAX_REASONINGS:
+                        self.reasoning_contents = self.reasoning_contents[-MAX_REASONINGS:]
 
             # 抽取工具调用步骤（更可靠）
             if event == "tool_call":
@@ -79,6 +181,8 @@ class EvaluationAgent:
                 self.steps.append(step)
                 if tool_name != "unknown":
                     self.tool_calls_sequence.append(tool_name)
+                if len(self.steps) >= MAX_STEPS:
+                    break
 
             # 绑定工具执行结果到最近的同名调用
             if event == "tool_result":
@@ -98,7 +202,11 @@ class EvaluationAgent:
                 if matched is not None:
                     matched["status"] = status
                     matched["duration_ms"] = duration_ms
-                    matched["result"] = result
+                    # store only a snippet; full output is not needed for qualitative scoring
+                    try:
+                        matched["result"] = str(result)[:1200] if result is not None else None
+                    except Exception:
+                        matched["result"] = None
 
         # fallback：如果没有 tool_call 事件，退回到 llm_response preview 提取工具名
         if not self.steps:
@@ -166,6 +274,25 @@ class EvaluationAgent:
         s = s.replace("\n", " ")
         return s[:max_len]
 
+    def _format_step_lines_compact(self, steps: List[Dict[str, Any]], start_index_1based: int = 1) -> str:
+        """A much shorter per-step representation for long transcripts.
+
+        We intentionally omit args/result payloads to keep prompts small.
+        """
+        lines: List[str] = []
+        for i, st in enumerate(steps):
+            idx = start_index_1based + i
+            tool = st.get("tool_name", "unknown")
+            status = st.get("status")
+            dur = st.get("duration_ms")
+            phase = st.get("phase")
+            rs = (st.get("reasoning_snippet") or "").strip()
+            rs = rs.replace("\n", " ")
+            if len(rs) > 80:
+                rs = rs[:80] + "…"
+            lines.append(f"{idx}. tool={tool}; phase={phase}; status={status}; dur_ms={dur}; note={rs}")
+        return "\n".join(lines)
+
     def _format_step_lines(self, steps: List[Dict[str, Any]], start_index_1based: int = 1) -> str:
         lines: List[str] = []
         for i, st in enumerate(steps):
@@ -209,7 +336,10 @@ class EvaluationAgent:
         stride: Optional[int] = None,
         max_windows: int = 30,
     ) -> Dict[str, Any]:
-        """按固定窗口对步骤序列逐段评分，返回窗口级评分与总体均分。"""
+        """按固定窗口对步骤序列逐段评分，返回窗口级评分与总体均分。
+
+        Important: for long runs, we use a compact step representation to keep prompts bounded.
+        """
         if not self.steps:
             return {
                 "window_size": window_size,
@@ -230,7 +360,8 @@ class EvaluationAgent:
 
             context = {
                 "window_size": len(chunk),
-                "step_window": self._format_step_lines(chunk, start_index_1based=start + 1),
+                # Use compact representation so each k-step eval stays small.
+                "step_window": self._format_step_lines_compact(chunk, start_index_1based=start + 1),
             }
             prompt = self.prompt_templates["step_window_score"]
             r = await self.evaluator.evaluate_with_prompt(prompt, context)

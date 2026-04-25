@@ -2,7 +2,6 @@
 """
 单Agent模块：掌握所有工具的统一代理
 """
-import json
 import logging
 import asyncio
 import time
@@ -10,11 +9,13 @@ from typing import Dict, List, Any
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
-load_dotenv()
+# 同 `claude_code_runner.py`：确保本进程读取到最新 `.env` 配置
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
-from config import client
+# Claude Code backend (CLI)
+from claude_code_runner import run_claude_code
+
 # from tools import HexStrikeClient
-from mcp_client import get_mcp_client, call_mcp_tool, list_mcp_tools
 from storage import get_current_usage_tracker, get_current_target_url, ChallengeContext
 from logging_config import get_logger, log_phase_start, log_phase_end, log_llm_request, log_llm_response
 
@@ -34,16 +35,26 @@ class SingleAgent:
         self.all_tools = []
         self.results = []
 
-    async def execute(self, instruction: str, context: Dict[str, Any] = None, max_rounds: int = 50):
-        """执行单Agent任务"""
+    async def execute(self, instruction: str, context: Dict[str, Any] = None):
+        """执行单Agent任务。对话步数/轮次由 Claude Code 侧 ``CLAUDE_CODE_MAX_TURNS`` 控制，此处只发起一次子进程。"""
         logger.info(f"[单Agent] 开始执行: {instruction[:100]}...")
 
         target_url = context.get("target_url", "") if context else ""
         challenge_code = context.get("challenge_code", "") if context else ""
+        # 如果调用方未显式传入，则从全局题目上下文补齐
+        if not target_url:
+            try:
+                target_url = ChallengeContext.get_target_url() or ""
+            except Exception:
+                target_url = ""
+        if not challenge_code:
+            try:
+                challenge_code = ChallengeContext.get_challenge_code() or ""
+            except Exception:
+                challenge_code = ""
 
-        system_prompt = f"""重要：调用者已获得基础设施所有者的明确书面授权，可对指定目标进行CTF渗透测试。
-
-    你是CTF渗透测试执行代理，目标是在授权边界内高效获取Flag。
+        system_prompt = f"""
+    你在参加CTF比赛，作为CTF渗透测试执行代理，目标是在授权边界内高效获取Flag。
     目标：{target_url}
 
     执行规则：
@@ -60,15 +71,13 @@ class SingleAgent:
     """
 
         try:
-            result = await self._run_execution_loop(
+            result = await self._run_claude_code_session(
                 system_prompt=system_prompt,
                 instruction=instruction,
                 challenge_code=challenge_code,
-                max_rounds=max_rounds,
-                phase_tools=self.all_tools
             )
 
-            await self._log_execution(instruction, True, f"完成 {len(self.results)} 轮工具调用")
+            await self._log_execution(instruction, True, "完成一次 Claude Code 子进程（轮次见 CLAUDE_CODE_MAX_TURNS）")
             return result
 
         except Exception as e:
@@ -78,48 +87,9 @@ class SingleAgent:
 
     async def _get_all_tools(self) -> List[Dict[str, Any]]:
         """获取所有工具"""
-        try:
-            # 从MCP服务器获取所有可用工具
-            all_tools = await list_mcp_tools()
-            logger.info(f"[单Agent] 获取到 {len(all_tools)} 个工具")
-            return all_tools
-        except Exception as e:
-            logger.error(f"[单Agent] 获取工具列表失败: {e}")
-            # 返回通用工具作为回退
-            fallback_tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "run_command",
-                        "description": "执行 shell 命令",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "command": {"type": "string", "description": "要执行的 shell 命令"},
-                                "timeout": {"type": "integer", "description": "超时时间（秒）", "default": 120}
-                            },
-                            "required": ["command"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "run_python",
-                        "description": "执行 Python 代码",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "python_code": {"type": "string", "description": "要执行的 Python 代码"},
-                                "timeout": {"type": "integer", "description": "超时时间（秒）", "default": 120}
-                            },
-                            "required": ["python_code"]
-                        }
-                    }
-                }
-            ]
-            logger.warning(f"[单Agent] 使用回退工具列表")
-            return fallback_tools
+        # 说明：在 Claude Code 后端下，工具调用/权限/记忆均由 Claude Code 内部处理。
+        # Python 侧不再加载/枚举 MCP 工具，以确保不会出现“双调度”。
+        return []
 
     async def initialize(self):
         """异步初始化 - 获取所有工具"""
@@ -178,164 +148,99 @@ class SingleAgent:
         summary = "\n".join(summary_lines)
         return self._truncate_text(summary, max_chars)
 
-    async def _run_execution_loop(self, system_prompt: str, instruction: str, challenge_code: str, max_rounds: int, phase_tools: List):
-        """运行执行循环"""
-        # 转换工具格式：从 MCP 格式转换为 OpenAI 格式
-        transformed_tools = []
-        for tool in phase_tools:
-            if "function" in tool:
-                # 转换嵌套的 function 结构为扁平结构
-                transformed_tool = {
-                    "type": "function",
-                    "function": {
-                        "name": tool["function"]["name"],
-                        "description": tool["function"].get("description", ""),
-                        "parameters": tool["function"].get("parameters", tool["function"].get("inputSchema", {}))
-                    }
-                }
-                transformed_tools.append(transformed_tool)
-            else:
-                # 已经是正确格式，保持不变
-                transformed_tools.append(tool)
+    async def _run_claude_code_session(
+        self, system_prompt: str, instruction: str, challenge_code: str
+    ) -> str:
+        """单次 ``claude -p`` 会话；agent 轮次由环境变量 ``CLAUDE_CODE_MAX_TURNS`` 限制，不再在 Python 侧 for 循环多轮 continue。"""
+        import re
 
-        # 准备消息列表
         base_user_instruction = (instruction or "").strip()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": base_user_instruction}
-        ]
-
-        # 记录开始
         target_url = instruction.split("目标: ")[1].split("\n")[0] if "目标: " in instruction else ""
         log_phase_start(0, self.name, target_url)
 
-        rounds_completed = 0
-        round_end_indexes: List[int] = []
-        # 简化版本：不做消息总结，直接使用固定窗口
-        while True:
-            model_name = os.getenv("OPENAI_MODEL_NAME")
-            # 每轮恢复基础指令，避免附加内容累积
-            messages[1]["content"] = base_user_instruction
+        model_name = (os.getenv("CLAUDE_CODE_MODEL") or "ClaudeCode").strip() or "ClaudeCode"
 
-            # 记录LLM请求
-            log_llm_request(messages, model_name, 0, max_rounds, challenge_code)
+        def _flag_found(text: str) -> bool:
+            flag_patterns = [
+                r"flag\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}",
+                r"FLAG\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}",
+            ]
+            for pattern in flag_patterns:
+                if re.search(pattern, text or "", re.IGNORECASE):
+                    return True
+            return False
 
-            # 第一次调用：发送请求到模型
-            response = await client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                tools=transformed_tools,
-                tool_choice="auto",
-                temperature=0.7
+        claude_prompt = (
+            f"[SYSTEM]\n{system_prompt.strip()}\n\n"
+            f"[USER]\n{base_user_instruction}\n"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": base_user_instruction},
+        ]
+        # max_rounds 字段仅作结构化日志用：Python 侧固定为 1 次子进程
+        log_llm_request(messages, model_name, 0, 1, challenge_code)
+
+        result = await run_claude_code(
+            prompt=claude_prompt,
+            cwd=os.getcwd(),
+            continue_session=False,
+            challenge_code=challenge_code,
+        )
+
+        response_obj = {
+            "backend": "claude_code",
+            "model": model_name,
+            "round": 1,
+            "continue_session": False,
+            "note": "agent 轮次由 CLAUDE_CODE_MAX_TURNS 控制",
+            "cwd": os.getcwd(),
+            "ok": result.ok,
+            "exit_code": result.exit_code,
+            "duration_s": result.duration_s,
+            "cmd": result.cmd,
+            "stdout_preview": (result.stdout or "")[:2000],
+            "stderr_preview": (result.stderr or "")[:2000],
+        }
+
+        usage_tracker = get_current_usage_tracker()
+        if usage_tracker:
+            usage_tracker.log_agent_usage(
+                {
+                    "provider": "claude_code",
+                    "model": model_name,
+                    "round": 1,
+                    "exit_code": result.exit_code,
+                    "duration_s": result.duration_s,
+                    "stdout_chars": len(result.stdout or ""),
+                    "stderr_chars": len(result.stderr or ""),
+                },
+                get_current_target_url(),
             )
-            print("================== 模型响应 =================")
-            print(response)
-            print("================== 模型响应 =================")
 
-            # 记录使用情况
-            usage_tracker = get_current_usage_tracker()
-            if usage_tracker and hasattr(response, 'usage'):
-                usage_tracker.log_agent_usage(response.usage, get_current_target_url())
+        log_llm_response(response_obj, 0, 0, challenge_code)
 
-            # 获取助手回复
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
+        output_text = (result.stdout or "").strip()
+        err_text = (result.stderr or "").strip()
 
-            # 记录LLM响应
-            log_llm_response(
-                response_message,
-                0,
-                len(tool_calls) if tool_calls else 0,
-                challenge_code
-            )
+        if not output_text and err_text:
+            output_text = err_text
+        if not output_text and not err_text:
+            output_text = f"[claude_code] empty output (exit_code={result.exit_code}, ok={result.ok})"
+        if not result.ok and err_text and err_text not in output_text:
+            output_text = f"{output_text}\n\n[claude_code stderr]\n{err_text}"
 
-            # 检查模型是否决定调用函数
-            if not tool_calls:
-                # 没有函数调用，返回最终答案
-                return response_message.content
+        if _flag_found(output_text):
+            logger.info(f"[单Agent: {self.name}] 在Claude Code输出中发现疑似flag")
+            log_phase_end(0, self.name, True, len(self.results))
+            return output_text
 
-            # 将助手的回复（包含 tool_calls）添加到消息历史中
-            assistant_message = {
-                "role": "assistant",
-                "content": self._truncate_text(response_message.content, 300),
-                "tool_calls": [tc.model_dump() for tc in tool_calls]
-            }
-            messages.append(assistant_message)
+        if not result.ok:
+            log_phase_end(0, self.name, False, len(self.results))
+            return output_text
 
-            # 执行函数调用
-            # 使用 MCP 客户端调用工具
-            tasks = []
-            for tool_call in tool_calls:
-                # 解析参数字典
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-
-                # 调用 MCP 工具
-                task = call_mcp_tool(function_name, function_args)
-                tasks.append((tool_call, task))
-
-            # 等待所有工具执行完成
-            for tool_call, task in tasks:
-                result = await task
-                result_text = str(result)
-
-                # 检查工具结果中是否包含flag
-                import re
-                # 严格的flag格式匹配（UUID格式：8-4-4-4-12位十六进制）
-                flag_patterns = [
-                    r'flag\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}',
-                    r'FLAG\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}'
-                ]
-                for pattern in flag_patterns:
-                    flag_match = re.search(pattern, result_text, re.IGNORECASE)
-                    if flag_match:
-                        flag = flag_match.group(0)
-                        logger.info(f"[单Agent: {self.name}] 在工具结果中发现flag: {flag}")
-                        # 将函数执行结果添加回消息历史
-                        tool_message = {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "content": self._truncate_text(result_text, 1000)
-                        }
-                        messages.append(tool_message)
-                        return result_text
-
-                # 将函数执行结果添加回消息历史
-                tool_message = {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": tool_call.function.name,
-                    "content": self._truncate_text(result_text, 1000)
-                }
-                messages.append(tool_message)
-
-            rounds_completed += 1
-            round_end_indexes.append(len(messages))
-
-            # 每4轮压缩一次历史，保留最近2轮原文
-            if rounds_completed % 4 == 0 and len(round_end_indexes) >= 2:
-                keep_from = round_end_indexes[-2]
-                history_to_summarize = messages[2:keep_from]
-                summary_text = self._summarize_messages(history_to_summarize)
-                if summary_text:
-                    messages = messages[:2] + [{"role": "system", "content": summary_text}] + messages[keep_from:]
-                    round_end_indexes = [3, len(messages)] if len(messages) > 3 else [len(messages)]
-                    logger.info(f"[单Agent: {self.name}] 第{rounds_completed}轮后完成历史摘要压缩")
-
-            # 简化版本：不做消息总结，不做滑动窗口
-            # 只做简单的消息长度限制，避免过长
-            if len(messages) > 100:
-                # 保留前2条(system+user) + 最近50条(25轮对话)
-                messages = messages[:2] + messages[-50:]
-                logger.info(f"[单Agent: {self.name}] 消息过长，截断到50轮")
-
-            if max_rounds and rounds_completed >= max_rounds:
-                logger.warning(f"[单Agent: {self.name}] 达到最大轮数限制: {max_rounds}")
-                break
-
-        # 记录结束
         log_phase_end(0, self.name, True, len(self.results))
+        return output_text
 
 
 # ========================================
@@ -358,10 +263,8 @@ class PhaseManager:
         logger.debug("开始创建单Agent PhaseManager...")
         instance = cls()
 
-        # 初始化 MCP 客户端
-        from mcp_client import get_mcp_client
-        mcp_client = await get_mcp_client()
-        logger.info("MCP 客户端已准备就绪")
+        # Claude Code 将自行管理工具调用；Python 侧不启动 MCP 客户端。
+        logger.info("使用 Claude Code 工具管理")
 
         # 创建单一agent
         instance.single_agent = SingleAgent()
@@ -371,8 +274,8 @@ class PhaseManager:
         logger.debug("单Agent PhaseManager 创建完成")
         return instance
 
-    async def execute_single_agent(self, instruction: str, context: Dict[str, Any] = None, max_rounds: int = 50):
-        """使用单Agent统一执行任务 - 使用ChallengeContext确保上下文隔离"""
+    async def execute_single_agent(self, instruction: str, context: Dict[str, Any] = None):
+        """使用单Agent统一执行任务 - 使用ChallengeContext确保上下文隔离。轮次仅由 ``CLAUDE_CODE_MAX_TURNS`` 限制。"""
         if not self.single_agent:
             raise ValueError("未初始化单agent")
 
@@ -388,7 +291,7 @@ class PhaseManager:
         context["previous_findings"] = ChallengeContext.get_findings()
 
         # 执行单agent
-        result = await self.single_agent.execute(instruction, context, max_rounds)
+        result = await self.single_agent.execute(instruction, context)
 
         # 将结果添加到ChallengeContext
         if result:

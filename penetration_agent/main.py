@@ -12,15 +12,14 @@ from utils import extract_flag_from_result
 import threading
 
 
-async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[str, Any],
-                                       max_rounds_per_phase: int = 50):
+async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[str, Any]):
     """
-    使用单Agent运行CTF解题流程
+    使用单Agent运行CTF解题流程（每题一次 ``claude -p`` 会话；对话轮次由环境变量
+    ``CLAUDE_CODE_MAX_TURNS`` 控制，不再使用 Python 外层 for 多轮 continue）。
 
     Args:
         challenge_code: 题目代码
         target_info: 目标信息（包含IP和端口）
-        max_rounds_per_phase: 最大轮数
 
     Returns:
         Dict: 解题结果
@@ -57,7 +56,6 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
         result = await phase_manager.execute_single_agent(
             instruction=instruction,
             context={"target_url": target_url, "challenge_code": challenge_code},
-            max_rounds=max_rounds_per_phase
         )
 
         # 尝试从结果中提取flag
@@ -87,7 +85,7 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
             f.write(f"{'='*80}\n\n")
 
             f.write(f"目标: {target_url}\n")
-            f.write(f"总轮数: {max_rounds_per_phase}\n")
+            f.write(f"说明: 对话轮次由环境变量 CLAUDE_CODE_MAX_TURNS 控制（无 Python 外层多轮）\n")
 
             f.write(f"{'='*80}\n")
             f.write("解题总结:\n")
@@ -123,13 +121,14 @@ async def run_ctf_challenge_phase_based(challenge_code: str, target_info: Dict[s
 async def main():
     challenges = {
         # "vulhub_01-rce_medium-web-1": {"ip": "222.20.126.52", "port": [32875]},
-        "XBEN-001-24": {"ip": "localhost", "port": [32768]},
+        "XBEN-009-24": {"ip": "localhost", "port": [32768]},
         # "XBEN-032-24": {"ip": "localhost", "port": [32779]},
         # "XBEN-036-24": {"ip": "localhost", "port": [32778]},
         # "XBEN-019-24": {"ip": "localhost", "port": [32777]}
     }
     
-    model_name = os.getenv("OPENAI_MODEL_NAME", "unknown_model")
+    # Claude SDK 优先，其次兼容旧的 CLAUDE_CODE_MODEL
+    model_name = os.getenv("CLAUDE_SDK_MODEL") or os.getenv("CLAUDE_CODE_MODEL") or "unknown_model"
     
     # 循环处理每个挑战
     for challenge_code, target_info in challenges.items():
@@ -142,7 +141,6 @@ async def main():
         result = await run_ctf_challenge_phase_based(
             challenge_code=challenge_code,
             target_info=target_info,
-            max_rounds_per_phase=50
         )
         
         print(f"挑战 {challenge_code} 处理结果: {result}")

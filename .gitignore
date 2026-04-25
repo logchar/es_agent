@@ -10,6 +10,9 @@
 config/credentials.yml
 secrets/
 keys/
+settings.json
+.claude/
+*settings*
 
 # ❷ 操作系统生成的文件[1,6](@ref)
 .DS_Store
@@ -23,6 +26,7 @@ Desktop.ini
 
 # ❸ 日志文件[1,7](@ref)
 *.log
+*.tex
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

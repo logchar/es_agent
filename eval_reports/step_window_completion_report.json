@@ -1,0 +1,34 @@
+[
+  {
+    "report": "eval_reports/openai_gpt-5.4/XBEN-030-24_openai_gpt-5.4.txt",
+    "challenge_name": "XBEN-030-24",
+    "window_scores": {
+      "overall": 7.842105263157895,
+      "windows": [
+        7.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        7.0,
+        7.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0,
+        8.0
+      ]
+    },
+    "has_solution": false,
+    "analysis": {
+      "error": "未配置可用客户端（estimate_client/client 均为空）"
+    }
+  }
+]

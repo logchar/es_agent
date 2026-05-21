@@ -1110,7 +1110,7 @@ if __name__ == "__main__":
         out: List[Path] = []
         try:
             for p in root.iterdir():
-                if p.is_dir() and (p.name.endswith("xben") or p.name.endswith("vulhub")):
+                if p.is_dir() and (p.name.endswith("xben") or p.name.endswith("vulhub") or p.name.endswith("multichallenge")):
                     out.append(p)
         except Exception:
             return []

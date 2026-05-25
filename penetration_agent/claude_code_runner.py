@@ -27,6 +27,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -365,7 +366,10 @@ async def run_claude_code(
         debug_lines.append(f"[runner] allowed_tools={allowed_tools!r} disallowed_tools={disallowed_tools!r}")
         debug_lines.append(f"[runner] mcp_config_set={bool(mcp_config)} session_id={session_id!r}")
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt, session_id=session_id)
+            if timeout_s is not None:
+                await asyncio.wait_for(client.query(prompt, session_id=session_id), timeout=timeout_s)
+            else:
+                await client.query(prompt, session_id=session_id)
 
             # 收集本次 response 的消息流
             assistant_text_parts: list[str] = []
